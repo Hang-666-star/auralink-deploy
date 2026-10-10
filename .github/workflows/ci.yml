@@ -24,6 +24,25 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify R25 publication transaction failures
+        run: python -m unittest discover -s r25 -p 'test_*.py' -v
+
+      - name: Verify legacy start is opt-in
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if bash scripts/start.sh; then
+            echo 'Legacy start must refuse without --legacy.' >&2
+            exit 1
+          else
+            code=$?
+            test "$code" -eq 64
+          fi
+
       - name: Check shell syntax
         shell: bash
         run: |
@@ -40,10 +59,16 @@ jobs:
           temporary_dir="$(mktemp -d)"
           trap 'rm -f "$temporary_dir/.env"; rmdir "$temporary_dir"' EXIT
           cp .env.example "$temporary_dir/.env"
+          default_services="$(docker compose --env-file "$temporary_dir/.env" \
+            -f docker-compose.yml -f docker-compose.gpu.yml config --services)"
+          test -z "$default_services"
           docker compose --env-file "$temporary_dir/.env" \
-            -f docker-compose.yml config --quiet
+            --profile legacy -f docker-compose.yml config --quiet
           docker compose --env-file "$temporary_dir/.env" \
-            -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+            --profile legacy -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+          docker compose --env-file "$temporary_dir/.env" --profile legacy \
+            -f docker-compose.yml -f docker-compose.gpu.yml config --format json \
+            | python -c 'import json,sys; services=json.load(sys.stdin)["services"]; assert services and all(s.get("profiles")==["legacy"] for s in services.values()), "Legacy services must require the legacy profile"'
 
   release-source:
     name: Verify main-to-release promotion

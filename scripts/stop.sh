@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 docker compose \
+    --profile legacy \
     --env-file .env \
     -f docker-compose.yml \
     -f docker-compose.gpu.yml \

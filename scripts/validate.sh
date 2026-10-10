@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 if command -v docker >/dev/null 2>&1 &&
    docker compose version >/dev/null 2>&1; then
     docker compose \
+        --profile legacy \
         --env-file .env.example \
         -f docker-compose.yml \
         config >/dev/null

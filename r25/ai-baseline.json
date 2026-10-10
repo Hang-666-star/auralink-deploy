@@ -1,0 +1,102 @@
+{
+  "files": [
+    {
+      "bytes": 78,
+      "path": "critic-service/app/__init__.py",
+      "sha256": "32d9ec245b5095d11101c947040347de59753f750ca5b960ad219c75815962d9"
+    },
+    {
+      "bytes": 4785,
+      "path": "critic-service/app/config.py",
+      "sha256": "5f9fb53a2ba57a8221d2940268d11da8eb54afa8be2fa287ca0f4b0e27486e43"
+    },
+    {
+      "bytes": 6415,
+      "path": "critic-service/app/dimensions.py",
+      "sha256": "384f6d707c2fb96c2d048397ee4d5b7a8dc13e9bbeedfaa828a034fcdc3f3b25"
+    },
+    {
+      "bytes": 2160,
+      "path": "critic-service/app/image_utils.py",
+      "sha256": "89f62f04f8ffcd5b71606feaced27f23357a8db3c497858589c9ebb383ed3e8e"
+    },
+    {
+      "bytes": 8000,
+      "path": "critic-service/app/llm.py",
+      "sha256": "956cf0029f3f03c5aa1e3b0276fef6be2261a90b06c7704a692dd98d05c70614"
+    },
+    {
+      "bytes": 6433,
+      "path": "critic-service/app/main.py",
+      "sha256": "7c7cb53b5cdcbdf7e7193fc8c3af853c8d3214ee2b6a581fd30af6cbb798839d"
+    },
+    {
+      "bytes": 4184,
+      "path": "critic-service/app/orchestrator.py",
+      "sha256": "80d337c42a2b73728ca08bf10d16c2e0251e69838ad3d586023cc90a9ff8e26e"
+    },
+    {
+      "bytes": 5146,
+      "path": "critic-service/app/prompts.py",
+      "sha256": "f527fa8f7b521cdd368a86f74d0c5fcad8b564bbf072852c8c71527a84af7e6e"
+    },
+    {
+      "bytes": 2004,
+      "path": "critic-service/app/schemas.py",
+      "sha256": "3b4bfd4dba48d17772816bf5365b125b7fbea6531a0a839a46ccb05f2ccdeb6f"
+    },
+    {
+      "bytes": 266,
+      "path": "critic-service/requirements.txt",
+      "sha256": "271c9b27ea2d6024e84dac9d73364ef8e58f46d319ab053b5998005cbba19314"
+    },
+    {
+      "bytes": 127,
+      "path": "guide_service/__init__.py",
+      "sha256": "be7494e77891bf47f56d15762880ba5b5bf5926a69661470809bacc34c7dadab"
+    },
+    {
+      "bytes": 49,
+      "path": "guide_service/__main__.py",
+      "sha256": "6db1610a3e68f9ce31d74ecf063f0571722c122da3104eed37cc9674de2b73b0"
+    },
+    {
+      "bytes": 8066,
+      "path": "guide_service/app.py",
+      "sha256": "2aa75b56dedeae2cf18c119a6cf670509fbd487db89340a7b65e48a9de802a1d"
+    },
+    {
+      "bytes": 6356,
+      "path": "guide_service/config.py",
+      "sha256": "aa25aa6d45b736f877aad9cf484b5553f3ec4307593a22de9c0716525599333f"
+    },
+    {
+      "bytes": 3341,
+      "path": "guide_service/diagnostics.py",
+      "sha256": "00f7122c58f37ede4fc5709fd568ff1ad23b50ec056141d7fd57c33dfdbaedb8"
+    },
+    {
+      "bytes": 4932,
+      "path": "guide_service/env_loader.py",
+      "sha256": "e6e30060a48ddc9519de7b04240ee5572af880c7218d64e6a517b5372abdb04e"
+    },
+    {
+      "bytes": 36336,
+      "path": "guide_service/qwen_client.py",
+      "sha256": "2e998406d11e23b69aee1ca96e501a191b1819386186afc155a1acdca4043d01"
+    },
+    {
+      "bytes": 167,
+      "path": "guide_service/requirements.txt",
+      "sha256": "57085d91b57a2c6fceca37b5219448ec6ca17886a3423597a52e982d938ffae3"
+    },
+    {
+      "bytes": 15148,
+      "path": "guide_service/schema.py",
+      "sha256": "21cf4e9a030f4a1d6c2c181cfd5a312b241454ffda39b160105c705688cfdad9"
+    }
+  ],
+  "schema": "R25_AI_OBSERVED_BASELINE_V1",
+  "source_commit": "c41c2435d6498c9f1177ae7faea329a799d72535",
+  "source_tree_sha256": "97cf196216ae8a9e1a4f8e15f1e6cac6fb338787a6663eb9789cecf0ba3f576a"
+}

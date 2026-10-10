@@ -2,6 +2,7 @@ name: auralink
 
 services:
   web:
+    profiles: [legacy]
     image: ${WEB_IMAGE}
     restart: unless-stopped
     expose:
@@ -12,6 +13,7 @@ services:
       - auralink-network
 
   core-api:
+    profiles: [legacy]
     image: ${CORE_API_IMAGE}
     restart: unless-stopped
     environment:
@@ -40,6 +42,7 @@ services:
       - auralink-network
 
   vmm-service:
+    profiles: [legacy]
     image: ${AI_SERVICE_IMAGE}
     command:
       - python
@@ -64,6 +67,7 @@ services:
       - auralink-network
 
   vision-service:
+    profiles: [legacy]
     image: ${AI_SERVICE_IMAGE}
     command:
       - python
@@ -85,6 +89,7 @@ services:
       - auralink-network
 
   nginx:
+    profiles: [legacy]
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
