@@ -6,7 +6,7 @@
 
 当前 `docker-compose.yml` 仍是旧 Docker 模板：Core API 使用 SQLite，容器端口为 5000，Web 容器端口为 3000。这与现有 R25 PostgreSQL 生产运行方式不同。`.env.example` 中的镜像与目录也只是模板配置，不能据此判断当前服务器的实际版本或路径。
 
-新增 CI 只检查 Shell 语法和 Compose 配置能否正确解析、合并。它不拉取镜像、不启动容器，也不会执行 `scripts/start.sh`、`scripts/stop.sh` 或切换 R25 生产服务。`release` 合并目前也不会触发本仓库的生产部署；R25 接通工作及跨组件发布要求见 [协作说明](docs/collaboration.md)。配置验证通过不代表生产部署通过。
+CI 检查 Shell 语法、Compose 配置以及 R25 发布事务的故障恢复测试。旧 Compose 服务均要求 `legacy` profile；CI 还验证 `scripts/start.sh` 在没有 `--legacy` 参数时退出 64。CI 不拉取镜像、不启动容器、不停止服务，也不切换 R25。R25 接通工作及跨组件发布要求见 [协作说明](docs/collaboration.md)。配置与事务测试通过不代表生产部署通过。
 
 ## 提交步骤
 
@@ -30,9 +30,10 @@ temporary_dir="$(mktemp -d)"
 trap 'rm -f "$temporary_dir/.env"; rmdir "$temporary_dir"' EXIT
 cp .env.example "$temporary_dir/.env"
 docker compose --env-file "$temporary_dir/.env" \
-  -f docker-compose.yml config --quiet
+  --profile legacy -f docker-compose.yml config --quiet
 docker compose --env-file "$temporary_dir/.env" \
-  -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+  --profile legacy -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+python -m unittest discover -s r25 -p 'test_*.py' -v
 ```
 
 这里使用的是示例值，临时文件在退出时删除。CI 不读取生产环境文件，也不输出展开后的环境变量值。仓库原有 `scripts/validate.sh` 在工具缺失时可能跳过部分检查，因此本次 CI 直接调用上述强制检查。

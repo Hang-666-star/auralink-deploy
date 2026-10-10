@@ -17,6 +17,11 @@ logs/
 *.pid
 *.sock
 
+# Generated Python caches and release controller bundles
+__pycache__/
+*.py[cod]
+dist/
+
 # Editor and operating system files
 .idea/
 .vscode/
