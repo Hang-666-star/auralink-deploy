@@ -2,6 +2,13 @@
 
 This repository contains deployment configuration for the Auralink platform.
 
+> Current scope: the Compose files below are a legacy Docker template, including
+> a SQLite Core API. They do not describe the current R25 PostgreSQL production
+> runtime. Configuration CI does not start services or deploy this template.
+> See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and
+> [the collaboration guide](docs/collaboration.md) for the four-repository workflow
+> and the remaining R25 deployment integration work.
+
 ## Included services
 
 - Web frontend
