@@ -1,0 +1,64 @@
+name: Deployment configuration CI
+
+on:
+  pull_request:
+    branches: [main, release]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate deployment configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find scripts -type f -name '*.sh' -print0)
+
+      - name: Validate base and GPU Compose configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker compose version
+          temporary_dir="$(mktemp -d)"
+          trap 'rm -f "$temporary_dir/.env"; rmdir "$temporary_dir"' EXIT
+          cp .env.example "$temporary_dir/.env"
+          docker compose --env-file "$temporary_dir/.env" \
+            -f docker-compose.yml config --quiet
+          docker compose --env-file "$temporary_dir/.env" \
+            -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+
+  release-source:
+    name: Verify main-to-release promotion
+    if: github.event_name == 'pull_request' && github.base_ref == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require this repository's main branch
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$HEAD_BRANCH" != 'main' || "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]]; then
+            echo 'Release pull requests must come from main in this repository.' >&2
+            exit 1
+          fi
