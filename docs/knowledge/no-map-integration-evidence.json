@@ -1,0 +1,160 @@
+{
+  "schema": "ARTLIVE_NO_MAP_V2_SANITIZED_INTEGRATION_V1",
+  "status": "verified",
+  "scope": "isolated PR candidate integration; not production activation or rollback acceptance",
+  "productionAccess": false,
+  "productionAcceptance": false,
+  "providerRequests": 0,
+  "taskRequests": 0,
+  "coreSourceCommit": "9e42dc66c8c0ccd79b7e640af859ef51e07c48c9",
+  "baselineJarSha256": "60c5b95529e027ec2cd3634cc6fe190fe43b42c48eb402e2d9ba0f1ce7caaecb",
+  "candidateJarSha256": "4748f2bef01b551bcb7a6c1eec4175abcb814395f6dbd56afbed7e37ee551d12",
+  "candidateJarBytes": 69632689,
+  "assetManifestSha256": "4a11c993bb55f4e2b8cbafc1b42e10a869bff4879ab0e3c110a8d324cbd863a5",
+  "requiredAssetCount": 2,
+  "releaseProfile": "poetry-only",
+  "mapPackaged": false,
+  "codeSha256": {
+    "core_business.py": "4bd5cafb6329576f77bd90eaf6a2fd9aa351fe15204f399a9308b487f93ea7d9",
+    "core_release_guard.py": "31ca0d83f86fa7f1644b4f93cca2d1d5fab453a16dcb10bc69733a2e3c90175d",
+    "core_runtime.py": "3e26b83fecb52f6b7f79116d47afbe58be6cda2f9627fcb51e559578e26269ec",
+    "publisher_transaction.py": "ba94dafd94cb96e37bf79a7004ed3de00732136f6e586c14d63eef0b057cbe1d",
+    "r25_storage.py": "c0eb0f7c07f725b7218782f20e5e68768e39bf971f654bdd632f4b681085332c"
+  },
+  "acceptanceSourceSha256ObservedAfterExecution": "b3c16fe000bd99aca1a11ec1a8d005f35566c2f955a3b4f2f7102c1baff6ae56",
+  "evidenceSha256": {
+    "run.py": "e3170ea9fd5d105b7f010f12c3a99a4df3e7625ed36ba9838ddeb83bf343b299",
+    "result.json": "5075e2ce4087bc9ace3ec7d6cee494f121852f06fdf37965de522a5617661747",
+    "execution.json": "8627ca42357d4bcbac76a70090a654324b1866d820fdb435b3ee4c4a82c65d4d"
+  },
+  "exitCode": 0,
+  "runnerSeconds": 34.519,
+  "invocationWallSeconds": 36.773,
+  "actual": [
+    "Publisher",
+    "CoreRuntime fixed-path runtime",
+    "BusinessGuard full policy/record/source/JAR/payload gates",
+    "R25Storage ownership/no-follow/fsync/CAS and shared flock",
+    "real legacy60c5 and no-map candidate JARs",
+    "actual verified lifecycle Engine Java start_role/stop_role/PID/session/listener methods",
+    "real isolated PostgreSQL16 public fixture schema and SELECT-only app role",
+    "actual HTTP authentication/public projection/poetry/statistics and disabled map503",
+    "root capability drop and global readonly tmpfs assets"
+  ],
+  "adapters": [
+    "Engine factory supplies fixture paired c5ea/Guide/Critic/Tunnel/watchdog controls; no production paired services",
+    "fixture bootstrap selects existing catalog-postgres-integration profile and temporary SQLite auth; original production launcher/profile not exercised",
+    "synthetic approval and accepted-record provenance; no real approval/release authorization",
+    "controller installation transaction not run in this harness; existing 17-file fault-injection evidence reused"
+  ],
+  "outcomes": [
+    "FOREIGN_LIFECYCLE_PROCESS_REFUSED",
+    "LOCK_CONFLICT_REFUSED",
+    "COMMITTED",
+    "CURRENT_VERIFIED_NOOP",
+    "COMMITTED_VERIFIED_NOOP",
+    "RESTORED",
+    "RESTORED_VERIFIED_NOOP",
+    "PROCESS_INTERRUPTED_AFTER_FIRST_REAL_JAR_WRITE",
+    "RESTORED",
+    "RESTORED_VERIFIED_NOOP"
+  ],
+  "postgresMajor": 16,
+  "syntheticPaintings": 10,
+  "allPublicTablesPreserved": 44,
+  "emptyPublicTables": 33,
+  "populatedUserTaskHistoryCovered": false,
+  "retainedTables": 11,
+  "allPublicTablesBeforeSha256": "c4e4c1e56aaa3feb99a2673cdece7536af8f24deea18eb97880224ccc422a230",
+  "allPublicTablesAfterSha256": "c4e4c1e56aaa3feb99a2673cdece7536af8f24deea18eb97880224ccc422a230",
+  "retentionBeforeSha256": "dca635f78c80061a5b2698da858f4c20a0d8f1a0437e3d616345d83be45ed4c9",
+  "retentionAfterSha256": "dca635f78c80061a5b2698da858f4c20a0d8f1a0437e3d616345d83be45ed4c9",
+  "mediaCount": 3,
+  "mediaPreserved": true,
+  "allFiveFilesRestored": true,
+  "baselineHttp": {
+    "anonymous_gallery": true,
+    "authenticated_detail_projection": "NOT_EXERCISED_NO_TEST_CREDENTIAL",
+    "detail_requires_authentication": true,
+    "gallery_total": 6,
+    "private_projection_live_samples": 0,
+    "private_projection_pg_sample_count": 1,
+    "provider_requests": 0,
+    "public_asset_json_error": true,
+    "schema": "R25_CORE_READONLY_HTTP_ACCEPTANCE_V1",
+    "write_requests": 0
+  },
+  "candidateHttp": {
+    "authenticated_projection_samples": 1,
+    "author_name_count": 2,
+    "edge_count": 609,
+    "gallery_total": 6,
+    "graph_sha256": "899511b6b7d02e6ba515986db651c67b3702497d2031bdbb75029c34491da2c0",
+    "map_authenticated_status": 503,
+    "map_enabled": false,
+    "node_count": 711,
+    "projection_mutation_test": "REUSED_REVIEWED_ISOLATED_EVIDENCE_NOT_RUN_ON_PRODUCTION",
+    "provider_requests": 0,
+    "release_profile": "poetry-only",
+    "schema": "R25_KNOWLEDGE_HTTP_ACCEPTANCE_V2",
+    "stats_sha256": "27e91284d28c05c9b7dde9fcb4181c713761d3c2eebf84816b45c9f7d9af7501",
+    "write_requests": 0
+  },
+  "candidateProcess": {
+    "candidate_isolation_verified": true,
+    "configuration_overrides": false,
+    "effective_capabilities": 0,
+    "filesystem_isolation": {
+      "capability_sets_zero": true,
+      "dedicated_mount": true,
+      "filesystem": "tmpfs",
+      "mount_read_only": true,
+      "no_new_privileges": true,
+      "nodev": true,
+      "noexec": true,
+      "nosuid": true,
+      "superblock_read_only": true
+    }
+  },
+  "committedFileSha256": {
+    "application": "03026dce4bf9cccbdebcbf2105f70a9c2b7d25a7f9bbedbac7ad86a9987b59bd",
+    "handoff": "1aa1ee81fe50a301c0921355dddf3fedd9a2813136e374f5f8f7feae4d28b821",
+    "manifest": "679e6431da73e5b99fa1d05eabaf36ccf8dc4e0d26f658a7212a419abd8667ab",
+    "preview-jar": "4748f2bef01b551bcb7a6c1eec4175abcb814395f6dbd56afbed7e37ee551d12",
+    "release-jar": "4748f2bef01b551bcb7a6c1eec4175abcb814395f6dbd56afbed7e37ee551d12"
+  },
+  "restoredFileSha256": {
+    "application": "2e260a148c06b769eb75ca481ad2dbaa7299674d27cd20a567fa65b98dabeb65",
+    "handoff": "cf911670524ae494b419cbb58661e4d8566c79b29519db3004b5feb601f05d44",
+    "manifest": "847594b5fa40736b5be972de2b343b81e358e396619f39399096a9fa3766c868",
+    "preview-jar": "60c5b95529e027ec2cd3634cc6fe190fe43b42c48eb402e2d9ba0f1ce7caaecb",
+    "release-jar": "60c5b95529e027ec2cd3634cc6fe190fe43b42c48eb402e2d9ba0f1ce7caaecb"
+  },
+  "transactionPhaseHistories": [
+    [
+      "PREPARED",
+      "STOP_INTENT",
+      "STOPPED",
+      "INSTALL_INTENT",
+      "INSTALLED",
+      "START_INTENT",
+      "ACCEPTED",
+      "CURRENT_COMMIT_INTENT",
+      "COMMITTED",
+      "RESTORE_STOP_INTENT",
+      "RESTORE_STOPPED",
+      "RESTORE_INTENT",
+      "RESTORED"
+    ],
+    [
+      "PREPARED",
+      "STOP_INTENT",
+      "STOPPED",
+      "INSTALL_INTENT",
+      "RESTORE_STOP_INTENT",
+      "RESTORE_STOPPED",
+      "RESTORE_INTENT",
+      "RESTORED"
+    ]
+  ]
+}

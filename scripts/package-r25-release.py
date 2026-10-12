@@ -15,6 +15,7 @@ FILES = tuple(sorted((
     'ai_publish.py', 'ai_release_candidate.py', 'ai_release_guard.py', 'ai_runtime.py',
     'ai-baseline.json', 'control_overlay.py', 'core_acceptance.py', 'core_publish.py',
     'core_release_guard.py', 'core_runtime.py', 'core-release-candidate.py',
+    'core_business.py', 'core_asset_sandbox.py', 'upgrade_core_controller.py',
     'install_ai_controller.py', 'install_core_controller.py', 'publisher_transaction.py',
     'r25_storage.py', 'verify-r25-artifact.py',
 )))

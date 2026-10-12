@@ -59,6 +59,13 @@ class Runtime(Protocol):
     def lease(self) -> ContextManager[None]: ...
     def current(self) -> Release: ...
     def verify_current(self, current: Release) -> None: ...
+    def verify_rollback_source(self, current: Release) -> None:
+        """Optional identity-only source check for an unhealthy business feature.
+
+        The target still passes full compatibility and post-restore acceptance.
+        Adapters without this method retain verify_current's existing behavior.
+        """
+        ...
     def verify_candidate(self, candidate: Release) -> None: ...
     def require_compatible(self, target: Release) -> None:
         """Authoritative readonly DB/media checks, including retained huaniao."""
@@ -227,5 +234,6 @@ class Publisher:
             plan = rt.load_recovery(transaction_id)
             if plan.phase != "COMMITTED" or rt.current() != plan.candidate:
                 raise Refused("rollback_current_changed_or_not_committed")
-            rt.verify_current(plan.candidate)
+            verify_source = getattr(rt, 'verify_rollback_source', rt.verify_current)
+            verify_source(plan.candidate)
             return self._restore(plan)

@@ -27,6 +27,9 @@ STORE = ROOT / 'runtime/core-publications'
 REPOSITORY = 'Hang-666-star/auralink-core-api'
 POLICY_SCHEMA = 'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1'
 RECORD_SCHEMA = 'R25_CORE_COMPATIBLE_RELEASE_V1'
+BUSINESS_POLICY_SCHEMA = 'R25_CORE_BUSINESS_POLICY_V2'
+BUSINESS_RECORD_SCHEMA = 'R25_CORE_BUSINESS_RELEASE_V2'
+LOCK = Path('/root/autodl-tmp/auralink-web-deploy/runtime/frontend-deployment.lock')
 START_PHASES = {'START_INTENT', 'ACCEPTED', 'CURRENT_COMMIT_INTENT', 'COMMITTED',
                 'RESTORE_INTENT', 'RESTORED'}
 
@@ -161,6 +164,10 @@ def policy():
         must(key not in values, 'handoff_duplicate')
         values[key] = value
     result = private_record(STORE / 'POLICY.json', digest_value(values.get('R25_CORE_RELEASE_POLICY_SHA256')))
+    if result.get('schema') == BUSINESS_POLICY_SCHEMA:
+        business_module(result).validate_policy(result)
+        validate_configuration_context(result)
+        return result
     must(result.get('schema') == POLICY_SCHEMA and result.get('baseline_sha256') == BASELINE and
          result.get('baseline_commit') == BASELINE_COMMIT and
          result.get('repository') == REPOSITORY, 'normal_policy_identity')
@@ -170,11 +177,86 @@ def policy():
     return result
 
 
+def business_module(value):
+    """Load the installed, policy-bound validator from verified source bytes."""
+    path = ROOT / 'operations/r25-publisher/core_business.py'
+    digest = digest_value(value.get('runtime_modules', {}).get('core_business.py'))
+    return source_module(path, 'r25_bound_core_business', read_file(path, expected=digest))
+
+
+def validate_configuration_context(value):
+    upgrade = value['upgrade']
+    baseline = upgrade['baseline_release']
+    candidate = upgrade['candidate']
+    current = private_record(STORE / 'CURRENT.json')
+    must(current.get('schema') == 'R25_CORE_CURRENT_V1', 'business_current_schema')
+    reference = current.get('release')
+    def side(ref):
+        if ref == baseline:
+            return 'before_sha256'
+        must(type(ref) is dict and ref.get('commit_sha') == candidate['commit_sha'] and
+             ref.get('artifact_sha256') == candidate['artifact_sha256'], 'business_current_identity')
+        digest_value(ref.get('accepted_record_sha256'))
+        return 'after_sha256'
+    allowed = {side(reference)}
+    try:
+        active = private_record(STORE / 'ACTIVE.json')
+    except FileNotFoundError:
+        active = None
+    if active is not None:
+        tx = active.get('transaction_id')
+        must(type(tx) is str and re.fullmatch('[0-9a-f]{32}', tx), 'business_active_identity')
+        journal = private_record(STORE / 'transactions' / tx / 'journal.json')
+        phase = journal.get('phase')
+        must(journal.get('transaction_id') == tx and
+             reference in (journal.get('current'), journal.get('candidate')), 'business_active_current')
+        # A prior completed V1 transaction may remain ACTIVE during controller
+        # installation. It cannot grant the new configuration any authority.
+        if phase not in {'COMMITTED', 'RESTORED'}:
+            must(journal.get('current') == baseline and side(journal.get('candidate')) == 'after_sha256',
+                 'business_transaction_releases')
+            if phase in {'PREPARED', 'STOP_INTENT', 'STOPPED'}:
+                allowed = {'before_sha256'}
+            elif phase in {'INSTALLED', 'START_INTENT', 'ACCEPTED', 'CURRENT_COMMIT_INTENT'}:
+                allowed = {'after_sha256'}
+            else:
+                must(phase in {'INSTALL_INTENT', 'RECOVERY_REQUIRED', 'RESTORE_STOP_INTENT',
+                               'RESTORE_STOPPED', 'RESTORE_INTENT'}, 'business_configuration_phase')
+                allowed = {'before_sha256', 'after_sha256'}
+    observed = hashlib.sha256(read_file(ROOT / 'runtime/config/application.yml')).hexdigest()
+    must(observed in {upgrade['configuration'][name] for name in allowed}, 'business_configuration_state')
+
+
+def require_release_configuration(value, record):
+    if value.get('schema') == BUSINESS_POLICY_SCHEMA:
+        expected = business_module(value).config_for_release(value, record)
+        read_file(ROOT / 'runtime/config/application.yml', expected=expected)
+
+
 def release_record(artifact_sha, expected_record=None, commit=None):
     artifact_sha = digest_value(artifact_sha)
     commit = digest_value(commit, 40)
     record = private_record(STORE / 'releases' / (artifact_sha + '-' + commit) / 'record.json', expected_record)
     expected = policy()
+    if expected.get('schema') == BUSINESS_POLICY_SCHEMA:
+        upgrade = expected['upgrade']
+        baseline = upgrade['baseline_release']
+        must(record.get('artifact_sha256') == artifact_sha and record.get('commit_sha') == commit,
+             'business_record_identity')
+        if artifact_sha == baseline['artifact_sha256'] and commit == baseline['commit_sha']:
+            must(expected_record == baseline['accepted_record_sha256'] and
+                 record.get('schema') == RECORD_SCHEMA and record.get('repository') == REPOSITORY and
+                 record.get('policy_sha256') == expected['legacy_policy_sha256'] and
+                 record.get('payload_fingerprint') == expected['legacy_policy']['payload_fingerprint'],
+                 'business_rollback_record')
+        else:
+            must(record.get('schema') == BUSINESS_RECORD_SCHEMA and
+                 record.get('policy_sha256') == hashlib.sha256(read_file(STORE / 'POLICY.json')).hexdigest(),
+                 'business_record_policy')
+            business_module(expected).candidate_matches(expected, record)
+        must(type(record.get('artifact_bytes')) is int and 0 < record['artifact_bytes'] < 512 * 1024 * 1024,
+             'release_artifact_size')
+        return record
     must(record.get('schema') == RECORD_SCHEMA and record.get('repository') == REPOSITORY and
          record.get('artifact_sha256') == artifact_sha and
          record.get('payload_fingerprint') == expected['payload_fingerprint'] and
@@ -203,6 +285,7 @@ def validate_backend_identity(root, backend):
         must(current.get('release') in (journal.get('current'), journal.get('candidate')), 'active_current_binding')
     record = release_record(backend, digest_value(reference.get('accepted_record_sha256')), reference.get('commit_sha'))
     must(record['commit_sha'] == reference.get('commit_sha'), 'release_commit_binding')
+    require_release_configuration(policy(), record)
     return record
 
 
@@ -267,8 +350,61 @@ def reject_legacy_bytecode(path):
     must(not any(item.exists() or item.is_symlink() for item in candidates), 'legacy_postgres_bytecode_cache')
 
 
+class BusinessGuard:
+    """V2 checks actual candidate capability; never impersonate the V1 baseline."""
+    lock = LOCK
+
+    def verify_lease(self, fd):
+        import fcntl
+        must(type(fd) is int and fd >= 3, 'business_lease_descriptor')
+        read_file(self.lock)
+        opened, named = os.fstat(fd), self.lock.lstat()
+        must((opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino), 'business_lease_inode')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise Refused('shared_publication_busy') from error
+
+    def is_registered_backend(self, backend):
+        validate_backend_identity(ROOT, backend)
+        return True
+
+    def prepare_launch(self, backend, fd):
+        """Called only by the owned launcher immediately before exec(Java).
+
+        Preserve the existing Java UID/PID and c5ea lifecycle contract. The
+        separately delivered asset filesystem must already be globally read-only;
+        this child permanently drops capabilities before running the new payload.
+        The coordinator itself never calls this privilege transition.
+        """
+        self.verify_lease(fd)
+        value = policy()
+        record = validate_backend_identity(ROOT, backend)
+        if record.get('schema') == BUSINESS_RECORD_SCHEMA:
+            business_module(value).prepare_asset_sandbox(value)
+
+    def require_backend_eligible(self, backend, fd):
+        self.verify_lease(fd)
+        value = policy()
+        record = validate_backend_identity(ROOT, backend)
+        for path in (ROOT / 'release/artifacts/backend.jar', PREVIEW / 'release/backend.jar'):
+            raw = read_file(path, limit=512 * 1024 * 1024, expected=backend)
+            must(len(raw) == record['artifact_bytes'] and
+                 payload_fingerprint(path) == record['payload_fingerprint'], 'business_live_payload')
+        module = business_module(value)
+        module.verify_compatibility(value, lambda sql: module.readonly_query(value, sql, fd))
+        if record.get('schema') == BUSINESS_RECORD_SCHEMA:
+            module.verify_assets(value)
+        return {'schema': 'R25_CORE_BUSINESS_ELIGIBILITY_V2', 'artifact_sha256': backend}
+
+
 def production():
     must(os.geteuid() == 0, 'root_operator')
+    # A first V1 installation has no POLICY yet; preserve that bootstrap path.
+    if (ROOT / 'runtime/core-publications/POLICY.json').exists():
+        raw_handoff = read_file(ROOT / 'runtime/handoff-control.env')
+        if b'R25_CORE_RELEASE_POLICY_SHA256=' in raw_handoff and policy().get('schema') == BUSINESS_POLICY_SCHEMA:
+            return BusinessGuard()
     path = ROOT / 'operations/huaniao_recovery_guard.py'
     raw = read_file(path, owner=(1000, 1000), mode=0o700, expected=LEGACY_GUARD_SHA)
     reject_legacy_bytecode(ROOT / 'operations/postgres_access.py')

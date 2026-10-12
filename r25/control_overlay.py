@@ -13,6 +13,8 @@ import hashlib
 
 BASE_LIFECYCLE_SHA256 = "b89b0abbf127d8a2f0b959646c6eeff6ca986a8fac5e626349efae74a75b28cb"
 BASE_LAUNCHER_SHA256 = "26daa88555f928079ac59b5374bd1ba2c9fd144cb6d944ca8e0e56fc8f8a462c"
+V1_LIFECYCLE_SHA256 = "21f92b7bb6e2a5581bcb0f58ea4fbaf9cd0049de60b84f2e1ec59767ecb07131"
+V1_LAUNCHER_SHA256 = "c5583e5d0157518385f3d54259e72ee6cd1218b2ada0b1a6fe2c846faff66b33"
 
 
 class OverlayRefused(ValueError):
@@ -161,4 +163,36 @@ def render_controls(lifecycle, launcher):
         raise OverlayRefused("rendered_python_syntax") from error
     return RenderedControls(rendered_lifecycle, rendered_launcher,
                             sha256(rendered_lifecycle), launcher_hash)
+
+
+BUSINESS_LAUNCH_MARKER = b"        recovery.require_backend_eligible(backend_hash,descriptor)\n"
+BUSINESS_LAUNCH_HOOK = BUSINESS_LAUNCH_MARKER + b"""        if hasattr(recovery,'prepare_launch'):
+            recovery.prepare_launch(backend_hash,descriptor)
+"""
+
+
+def render_business_controls(lifecycle, launcher):
+    """Add the V2 sandbox hook only to the exact already-reviewed V1 pair.
+
+    The hook executes in the Java launcher child immediately before exec, after
+    eligibility validation. V1 guards have no prepare_launch and retain their
+    behavior. UID, owned process checks, all non-Java and c5ea code stay intact.
+    """
+    if type(lifecycle) is not bytes or type(launcher) is not bytes:
+        raise OverlayRefused('source_bytes_required')
+    if sha256(lifecycle) != V1_LIFECYCLE_SHA256 or sha256(launcher) != V1_LAUNCHER_SHA256:
+        raise OverlayRefused('audited_v1_source_sha256_mismatch')
+    rendered_launcher = replace_once(launcher, BUSINESS_LAUNCH_MARKER,
+                                     BUSINESS_LAUNCH_HOOK, 'business_launch_sandbox')
+    launcher_sha = sha256(rendered_launcher)
+    rendered_lifecycle = replace_once(lifecycle,
+        ("JAVA_LAUNCH = '" + V1_LAUNCHER_SHA256 + "'\n").encode(),
+        ("JAVA_LAUNCH = '" + launcher_sha + "'\n").encode(), 'business_launcher_digest')
+    try:
+        ast.parse(rendered_launcher.decode('utf-8'))
+        ast.parse(rendered_lifecycle.decode('utf-8'))
+    except (SyntaxError, UnicodeError) as error:
+        raise OverlayRefused('rendered_python_syntax') from error
+    return RenderedControls(rendered_lifecycle, rendered_launcher,
+                            sha256(rendered_lifecycle), launcher_sha)
 
