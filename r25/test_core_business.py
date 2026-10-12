@@ -17,15 +17,19 @@ def encoded(value):
     return (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
 
 
-def fixture_policy(root):
+def fixture_policy(root, profile='map-enabled'):
     """Reusable explicit test approval; never usable as a production approval."""
     root = Path(root)
     account = pwd.getpwuid(os.getuid())
     before = b'auralink:\n  critic:\n    policy: configured-provider\n'
     knowledge = {'snapshot-root': str(root / 'snapshot'), 'graph-sha256': '1'*64,
-                 'stats-sha256': '2'*64, 'china-sha256': '3'*64}
+                 'stats-sha256': '2'*64, 'map-enabled': profile == 'map-enabled'}
+    evidence = {'review_id':'SYNTHETIC-REVIEW-ONLY', 'compatibility_sha256':'3'*64, 'acceptance_sha256':'4'*64}
+    if profile == 'map-enabled':
+        knowledge['china-sha256'] = '3'*64
+        evidence['map_permission_sha256'] = '5'*64
     after = before + b'\n# R25 reviewed Knowledge configuration\n' + b''.join(
-        ('auralink.knowledge.' + key + ': ' + json.dumps(knowledge[key]) + '\n').encode() for key in business.CONFIG_KEYS)
+        ('auralink.knowledge.' + key + ': ' + json.dumps(knowledge[key]) + '\n').encode() for key in business.config_keys(profile))
     legacy = {'schema': 'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1', 'repository': business.REPOSITORY,
               'baseline_sha256': 'a'*64, 'baseline_commit': 'a'*40, 'payload_fingerprint': 'b'*64,
               'application_configuration_sha256': business.sha(before)}
@@ -42,7 +46,7 @@ def fixture_policy(root):
                 'credential_uid':os.getuid(), 'credential_gid':os.getgid(),
                 'native_configuration_path':str(root / 'native-control.env'),
                 'native_configuration_sha256':business.sha(('R25_NATIVE_SERVICE_USER='+account.pw_name+'\n').encode())}},
-        'upgrade': {'capability':'knowledge-read-v1',
+        'upgrade': {'capability':'knowledge-read-v1', 'release_profile':profile,
             'candidate': {'repository':business.REPOSITORY, 'commit_sha':'c'*40, 'github_run_id':'1234', 'github_run_attempt':'1',
                           'artifact_sha256':'d'*64, 'artifact_bytes':1234, 'payload_fingerprint':'e'*64},
             'baseline_release': {'commit_sha':'a'*40, 'artifact_sha256':'a'*64, 'accepted_record_sha256':'f'*64},
@@ -51,8 +55,7 @@ def fixture_policy(root):
             'assets': {'manifest_path':str(root/'assets.json'), 'manifest_sha256':'1'*64,
                        'owner_uid':os.getuid(), 'owner_gid':os.getgid()},
             'compatibility': {'retention_manifest_path':str(root/'retention.json'), 'retention_manifest_sha256':'2'*64},
-            'evidence': {'review_id':'SYNTHETIC-REVIEW-ONLY', 'compatibility_sha256':'3'*64,
-                         'acceptance_sha256':'4'*64, 'map_permission_sha256':'5'*64}}}
+            'evidence': evidence}}
 
 
 class BusinessContractTests(unittest.TestCase):
@@ -109,11 +112,11 @@ class BusinessContractTests(unittest.TestCase):
         self.policy['installation']['service']['uid'] = 0
         with self.assertRaisesRegex(business.Refused, 'service_isolation'): business.validate_policy(self.policy)
 
-    def test_configuration_preserves_all_old_bytes_and_limits_four_properties(self):
+    def test_configuration_preserves_all_old_bytes_and_limits_map_profile_properties(self):
         before = b'auralink:\n  critic:\n    policy: configured-provider\n'
         result = business.render_configuration(before, self.policy)
         self.assertTrue(result.startswith(before))
-        self.assertEqual(result.count(b'auralink.knowledge.'), 4)
+        self.assertEqual(result.count(b'auralink.knowledge.'), 5)
         self.assertIn(b'policy: configured-provider', result)
         with self.assertRaisesRegex(business.Refused, 'configuration_before'):
             business.render_configuration(before.replace(b'configured-provider', b'changed-policy'), self.policy)

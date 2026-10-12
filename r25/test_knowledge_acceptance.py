@@ -11,8 +11,8 @@ from core_release_guard import Refused
 class KnowledgeAcceptanceTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
-        self.policy = {'upgrade': {'configuration': {'knowledge': {
-            'graph-sha256': '1'*64, 'stats-sha256': '2'*64, 'china-sha256': '3'*64}}}}
+        self.policy = {'upgrade': {'release_profile': 'map-enabled', 'configuration': {'knowledge': {
+            'graph-sha256': '1'*64, 'stats-sha256': '2'*64, 'map-enabled': True, 'china-sha256': '3'*64}}}}
         self.stats = {'schemaVersion': 1, 'population': {'key': 'gallery-displayable', 'count': 6},
             'authorNames': {'count': 2, 'eligibleRecords': 3}, 'metrics': {}}
         for name in ('dynasty', 'category', 'geography', 'style', 'imagery', 'sentiment', 'sentimentByDynasty'):
@@ -38,7 +38,9 @@ class KnowledgeAcceptanceTests(unittest.TestCase):
             status, result = 401, {'code':'UNAUTHORIZED', 'status':401}
         elif path.endswith('/painting-statistics'): result = self.stats
         elif path.endswith('/poetry-graph'): result = self.graph
-        elif path.endswith('/china-map'): result = self.china
+        elif path.endswith('/china-map'):
+            result = self.china
+            status = self.china.get('status', 200)
         else: result = self.detail
         return status, 'application/json', json.dumps(result).encode()
 
@@ -80,6 +82,40 @@ class KnowledgeAcceptanceTests(unittest.TestCase):
         with patch.object(acceptance, 'request', return_value=(200,'application/json',b'{}')) as get:
             acceptance.authenticated_request(token)(acceptance.KNOWLEDGE_PATHS[0])
         get.assert_called_once_with(acceptance.KNOWLEDGE_PATHS[0], 'application/json', bearer=token)
+
+    def poetry_only(self):
+        self.policy['upgrade']['release_profile'] = 'poetry-only'
+        self.policy['upgrade']['configuration']['knowledge']['map-enabled'] = False
+        del self.policy['upgrade']['configuration']['knowledge']['china-sha256']
+        self.china = {'status': 503, 'code': 'KNOWLEDGE_SNAPSHOT_UNAVAILABLE',
+            'message': '此版本未启用地理底图；地域统计仍可读取。',
+            'path': acceptance.KNOWLEDGE_PATHS[2], 'validationErrors': {}}
+
+    def test_no_map_requires_disabled_response_but_keeps_auth_geography_and_graph(self):
+        self.poetry_only()
+        receipt = self.verify()
+        self.assertEqual(receipt['release_profile'], 'poetry-only')
+        self.assertEqual(receipt['map_authenticated_status'], 503)
+        self.assertEqual(receipt['gallery_total'], 6)
+        self.assertEqual(receipt['edge_count'], 1)
+        self.assertNotIn('china_sha256', receipt)
+        self.assertIn((acceptance.KNOWLEDGE_PATHS[2], False), self.calls)
+        self.assertIn((acceptance.KNOWLEDGE_PATHS[2], True), self.calls)
+
+    def test_no_map_rejects_enabled_profile_missing_graph_or_data_in_error(self):
+        self.poetry_only()
+        original = deepcopy(self.china)
+        for patch_value in ({'status': 200}, {'code': 'INTERNAL_ERROR'}, {'message': 'file is missing'},
+                            {'features': [{}]}, {'validationErrors': {'private': 'data'}}):
+            with self.subTest(patch=patch_value), self.assertRaises(Refused):
+                self.china = {**original, **patch_value}
+                self.verify()
+        self.china = original
+        with self.assertRaisesRegex(Refused, 'http_json_contract'):
+            self.verify(lambda path: (503, 'application/json', b'{}') if path.endswith('poetry-graph') else self.get(path, True))
+        self.policy['upgrade']['configuration']['knowledge']['map-enabled'] = True
+        with self.assertRaisesRegex(Refused, 'knowledge_release_profile'):
+            self.verify()
 
 
 if __name__ == '__main__': unittest.main()

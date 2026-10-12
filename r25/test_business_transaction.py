@@ -21,13 +21,15 @@ from test_core_business import fixture_policy, encoded
 
 
 class BusinessTransactionTests(unittest.TestCase):
+    release_profile = 'map-enabled'
+
     def setUp(self):
         self.h = runtime_fixture.RuntimeMethodTests('runTest')
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
         h = self.h
         self.rt = h.runtime
-        self.policy = fixture_policy(h.root)
+        self.policy = fixture_policy(h.root, self.release_profile)
         up = self.policy['upgrade']
         up['baseline_release'] = asdict(h.old)
         up['candidate'].update(commit_sha=h.new.commit_sha, artifact_sha256=h.new.artifact_sha256,
@@ -39,7 +41,7 @@ class BusinessTransactionTests(unittest.TestCase):
         up['configuration']['before_sha256'] = self.policy['legacy_policy']['application_configuration_sha256'] = digest(before)
         after = before + b'\n# R25 reviewed Knowledge configuration\n' + b''.join(
             ('auralink.knowledge.'+k+': '+json.dumps(up['configuration']['knowledge'][k])+'\n').encode()
-            for k in business.CONFIG_KEYS)
+            for k in business.config_keys(self.release_profile))
         up['configuration']['after_sha256'] = digest(after)
         media = h.root/'retained-media.bin'; media.write_bytes(b'retained synthetic media')
         self.media = media
@@ -161,6 +163,11 @@ class BusinessTransactionTests(unittest.TestCase):
         self.assertEqual(self.h.events.count('java_stopped'), stopped)
         self.assertEqual(self.h.live['release-jar'].read_bytes(), b'foreign unapproved jar')
         self.assertEqual(self.rt.current(), self.h.new)
+
+
+class PoetryOnlyBusinessTransactionTests(BusinessTransactionTests):
+    """Same transaction/recovery assertions with exact two-file profile config."""
+    release_profile = 'poetry-only'
 
 
 if __name__ == '__main__': unittest.main()

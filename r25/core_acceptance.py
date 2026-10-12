@@ -143,8 +143,13 @@ def verify_knowledge_http(query, policy, *, get=request, get_authenticated):
         denied = json_response(path, 401, get=get)
         must(denied.get('code') == 'UNAUTHORIZED' and denied.get('status') == 401,
              'knowledge_anonymous_contract')
+    profile = policy['upgrade'].get('release_profile')
+    knowledge = policy['upgrade']['configuration']['knowledge']
+    must(profile in ('poetry-only', 'map-enabled') and
+         knowledge.get('map-enabled') is (profile == 'map-enabled'), 'knowledge_release_profile')
     before = json_response('/api/v1/paintings?page=0&size=1', get=get)
-    stats, graph, china = [json_response(path, get=get_authenticated) for path in KNOWLEDGE_PATHS]
+    stats, graph = [json_response(path, get=get_authenticated) for path in KNOWLEDGE_PATHS[:2]]
+    china = json_response(KNOWLEDGE_PATHS[2], 200 if profile == 'map-enabled' else 503, get=get_authenticated)
     after = json_response('/api/v1/paintings?page=0&size=1', get=get)
     count = stats.get('population', {}).get('count')
     must(stats.get('schemaVersion') == 1 and stats.get('population', {}).get('key') == 'gallery-displayable'
@@ -164,7 +169,6 @@ def verify_knowledge_http(query, policy, *, get=request, get_authenticated):
              0 <= unmatched <= eligible <= count and missing == count - eligible, 'knowledge_metric_coverage')
         limit = 12 if name == 'style' else 40 if name == 'imagery' else 50
         must(type(metric.get('items')) is list and len(metric['items']) <= limit, 'knowledge_metric_bound')
-    knowledge = policy['upgrade']['configuration']['knowledge']
     must(graph.get('schemaVersion') == 1 and graph.get('source') == 'legacy-poetry-snapshot' and
          graph.get('graphSha256') == knowledge['graph-sha256'] and
          graph.get('statsSha256') == knowledge['stats-sha256'], 'knowledge_graph_identity')
@@ -177,8 +181,18 @@ def verify_knowledge_http(query, policy, *, get=request, get_authenticated):
          'knowledge_graph_ids')
     must(all(type(link) is dict and link.get('source') in ids and link.get('target') in ids for link in links),
          'knowledge_graph_endpoints')
-    must(china.get('type') == 'FeatureCollection' and china.get('sha256') == knowledge['china-sha256'] and
-         type(china.get('features')) is list and 0 < len(china['features']) <= 100, 'knowledge_map_identity')
+    if profile == 'map-enabled':
+        must(china.get('type') == 'FeatureCollection' and china.get('sha256') == knowledge['china-sha256'] and
+             type(china.get('features')) is list and 0 < len(china['features']) <= 100, 'knowledge_map_identity')
+    else:
+        # A generic failed map load is not evidence of the approved disabled
+        # capability. Require its exact safe error envelope and no data fields.
+        must(set(china) <= {'timestamp', 'status', 'code', 'message', 'path', 'correlationId', 'validationErrors', 'violations'} and
+             china.get('status') == 503 and china.get('code') == 'KNOWLEDGE_SNAPSHOT_UNAVAILABLE' and
+             china.get('message') == '此版本未启用地理底图；地域统计仍可读取。' and
+             china.get('path') == KNOWLEDGE_PATHS[2] and
+             china.get('validationErrors') in (None, {}) and china.get('violations') in (None, []),
+             'knowledge_map_disabled_contract')
     samples = json.loads(query(PRIVATE_SAMPLE_SQL))
     must(type(samples) is list and len(samples) <= 3, 'private_projection_sample_shape')
     for sample in samples:
@@ -192,10 +206,15 @@ def verify_knowledge_http(query, policy, *, get=request, get_authenticated):
         annotations = detail.get('annotations')
         must(type(annotations) is list and all(type(a) is dict and a.get('visibility') == 'public'
              for a in annotations), 'authenticated_annotation_projection')
-    return {'schema': 'R25_KNOWLEDGE_HTTP_ACCEPTANCE_V1', 'gallery_total': count,
+    receipt = {'schema': 'R25_KNOWLEDGE_HTTP_ACCEPTANCE_V2', 'release_profile': profile, 'gallery_total': count,
             'author_name_count': names['count'], 'node_count': len(nodes), 'edge_count': len(links),
-            'map_features': len(china['features']), 'graph_sha256': graph['graphSha256'],
-            'stats_sha256': graph['statsSha256'], 'china_sha256': china['sha256'],
+            'map_enabled': profile == 'map-enabled', 'graph_sha256': graph['graphSha256'],
+            'stats_sha256': graph['statsSha256'],
             'authenticated_projection_samples': len(samples),
             'projection_mutation_test': 'REUSED_REVIEWED_ISOLATED_EVIDENCE_NOT_RUN_ON_PRODUCTION',
             'write_requests': 0, 'provider_requests': 0}
+    if profile == 'map-enabled':
+        receipt.update(map_features=len(china['features']), china_sha256=china['sha256'])
+    else:
+        receipt['map_authenticated_status'] = 503
+    return receipt

@@ -1,5 +1,40 @@
 # Isolated validation of the Deploy Knowledge candidate
 
+## Approved no-map follow-up
+
+The two-file `poetry-only` contract changed actual V2 validation/HTTP acceptance,
+so the repository-required suite was run on the updated source: **191 tests,
+zero failures/errors/skips, 13.940seconds**. Shell syntax, legacy start refusal64,
+base/GPU Compose config, empty default services and every service's legacy profile
+also passed using the existing task-only Compose5.6.0. No containers started.
+Local evidence: `evidence/NOMAP_DEPLOY_TESTS.log` and `NOMAP_DEPLOY_CHECKS.json`.
+
+The17 added cases cover seven real temporary-file/profile checks, two disabled-map
+HTTP checks and eight Publisher/recovery assertions for poetry-only. They verify
+exact profile/configuration/manifest/file-set binding; literal false (not a string
+or0), no map hash/evidence/file in this candidate, required poetry missing/corrupt/
+wrong-hash/mode refusal and exact restoration, map-enabled's retained three-file
+hash/permission requirements, authenticated disabled503 with no data, and failed
+or200 map responses refusing acceptance. No-map Publisher commit/repeat/recovery/
+compatible rollback and foreign data/JAR refusals exercise the actual methods.
+
+Asset tests use real temporary file bytes, owner/mode/digest checks; service and
+ancestor-access decisions are explicit stubs. HTTP responses and lifecycle are
+fixtures in these unit tests. They do not claim real Java/PG coverage. The separate [current no-map real-process integration](readiness-integration.md)
+completed in34.519seconds (36.773seconds total invocation), exit0, using the actual
+4748…JAR/Core9e42…source, real Java/PG/filesystem/HTTP and two files. Its
+[sanitized receipt](no-map-integration-evidence.json) records exact hashes,
+outcomes and adapters. Previous map-enabled artifacts below are historical and
+cannot cover different candidate JAR bytes. The shared locks, V1 equivalence and
+V2 controller/transaction tests remain in the191-test suite without weakened gates.
+
+The unchanged seven painting PostgreSQL cases retain their specifically mapped
+prior executed evidence. The10k performance run was not repeated. Core CI skips
+must still be described as skipped, not as newly executed by these Deploy tests.
+
+## Earlier map-enabled evidence (retained, not current artifact acceptance)
+
+
 Dated 2026-10-12. These are development observations, not production rollout,
 rollback, capacity or data-reconciliation acceptance. No production installation,
 configuration, database, account, service or provider was accessed by these tests.
@@ -87,8 +122,8 @@ opt-in conditions; those seven were exercised in the prior explicit local PG run
 The earlier1.585s HTTP median was warm-cache, single-concurrency and JIT-disabled;
 it is not a production performance result.
 
-Pending: owner review; final release artifact/approval identities; actual
-installation/service/credential/effective-config preflight; exact map license;
+Pending for the no-map release: owner review; final release artifact/approval
+identities; actual installation/service/credential/effective-config preflight;
 Git-external immutable asset delivery and reboot recovery; full coordinated
 controller/Core/Web production acceptance and rollback. No PR/CI result grants
 these approvals. See [business contract](business-upgrade.md) and [assets](assets.md).

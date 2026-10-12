@@ -5,6 +5,11 @@ has not installed, started, stopped or published anything in production. Every
 mutation below requires a separately authorized R25/c5ea window. Do not execute
 examples with PR heads, synthetic approval records or guessed configuration.
 
+The approved first release is **no map, geography retained**. The selected V2
+profile is `poetry-only`, not an operational omission from a three-file profile.
+It requires exactly two poetry assets and literal `map-enabled: false`; no map
+file/hash/configuration or map-permission evidence belongs in this candidate.
+
 ## Observed starting state and mandatory decisions
 
 The bounded 2026-10-12 observation found the original production lifecycle and
@@ -27,10 +32,10 @@ Before scheduling writes, the owner must resolve all of the following:
 
 1. Required review and checks for Deploy #3, Core #10 and Web #14, then the normal
    separately approved main-to-release promotions. Main merge alone is not deploy.
-2. Exact DataV/Gaode map hosting/API permission, or a separately reviewed scope
-   change. Current V2 requires all three assets and a map-permission evidence
-   digest. A map-unavailable release is **not** enabled by removing a file or
-   inventing that digest; it needs an explicit contract/acceptance change.
+2. Verify the already approved `poetry-only` scope is bound in the final Web,
+   Core, V2 policy/configuration and two-file manifest. Map permission remains
+   unresolved only for any future map-enabled release; do not seek or fabricate
+   map permission for this no-map candidate.
 3. Final Deploy/Core release identities, artifact run/attempt/hashes, the known
    reviewed compatible Web source commit, and independently reviewed private
    controller/policy/compatibility records. Web's later release merge SHA is
@@ -108,7 +113,7 @@ host verification. Do not print keys, environment files or private records.
 ## Deliver assets and private records in the authorized preparation window
 
 This is a separate asset-administrator operation, not a publisher fallback.
-Follow [the asset installation/recovery procedure](assets.md). Copy the three
+Follow [the asset installation/recovery procedure](assets.md). Copy the two poetry
 hash-bound files from the durable external bundle to a new offline version,
 verify exact sizes/hashes and service traversal/read access, apply reviewed
 owner/group with directory0550/files0440, and mount/remount the **whole dedicated
@@ -129,7 +134,8 @@ python3 -B "$TRUSTED_CORE_SOURCE/scripts/verify-knowledge-assets.py" \
 ```
 
 This command only proves bytes. `--check-environment` verifies only an explicitly
-supplied four-variable environment, not the effective running Spring properties.
+supplied four-variable environment (root, graph SHA, stats SHA, map enabled=false),
+not the effective running Spring properties.
 The current root service must not be falsely passed through the non-root-only
 `--require-read-only` flag. V2 separately verifies the globally ro tmpfs and, after
 launch, the real process's five capability sets and NoNewPrivs. Application config
@@ -141,7 +147,7 @@ editing YAML before publication. The policy binds these exact four values:
 | `auralink.knowledge.snapshot-root` | approved new absolute version root |
 | `auralink.knowledge.graph-sha256` | `899511b6b7d02e6ba515986db651c67b3702497d2031bdbb75029c34491da2c0` |
 | `auralink.knowledge.stats-sha256` | `27e91284d28c05c9b7dde9fcb4181c713761d3c2eebf84816b45c9f7d9af7501` |
-| `auralink.knowledge.china-sha256` | `206cf7fd5acba4bb08d9586899acc144cea2b29d9e93ff70f93895c5e5ffde77` |
+| `auralink.knowledge.map-enabled` | literal boolean `false` |
 
 Private delivery must include, after independent human review:
 
@@ -150,13 +156,16 @@ Private delivery must include, after independent human review:
   compatible Web source commit in `upgrade.web_commit` (not a future merge SHA);
   full application before/after digests; twelve runtime module hashes;
   actual service/native PostgreSQL/credential/psql ownership, modes and hashes;
-  external manifest and stable-window catalog/media retention evidence.
+  `upgrade.release_profile: poetry-only`, exact two-file schemaVersion2 manifest
+  with `releaseProfile: poetry-only`, and stable-window catalog/media retention
+  evidence. `china-sha256` and `map_permission_sha256` must be absent.
 - `CONTROL_UPGRADE_APPROVAL.json`: reviewed Deploy release/run/attempt, exact
   old/new controllers/policy/modules/handoff, preserved CURRENT/JAR pair/MANIFEST/
   application hashes and approved evidence reference. Its approved SHA must be
   conveyed independently, not read from the untrusted record as its own authority.
-- Exact private asset/retention/evidence documents at policy-bound paths. Map
-  permission and compatibility evidence must be real, not fixture placeholders.
+- Exact private asset/retention/evidence documents at policy-bound paths. Review
+  and compatibility evidence must be real, not fixture placeholders. No map
+  permission input is used for this approved no-map profile.
 - `ACCEPTANCE_SESSION.json` in the fixed Core store, root-private0600, with the
   existing authorized `bearer` value. Never put the value in shell arguments,
   command output, Git or PRs. Absence/expiry blocks candidate acceptance.
@@ -285,9 +294,11 @@ then performs the application transaction. Record its transaction ID and every
 outcome. Accept only verified `COMMITTED` (or verified exact no-op), never shell
 exit alone. Require JAR pair/MANIFEST/handoff/config/CURRENT consistency, observed
 owned PID/start-ticks/hash, readonly catalog/media compatibility, idle work,
-zero candidate capabilities/NoNewPrivs, anonymous401, authenticated three GETs,
-Gallery/statistics equality, public projection, graph/map hashes and media JSON
-errors. The authenticated checks run through the actual installed publisher;
+zero candidate capabilities/NoNewPrivs, all three anonymous Knowledge401s,
+authenticated statistics/poetry200 and exact map-disabled503 (no map data),
+Gallery/statistics equality, geography field coverage, public projection, both
+poetry hashes and media JSON errors. An unexpected map200, generic asset-failure
+503, extra map file or incompatible profile/configuration refuses acceptance. The authenticated checks run through the actual installed publisher;
 there is no separate fabricated HTTP success receipt.
 
 ## Only then publish Web through c5ea

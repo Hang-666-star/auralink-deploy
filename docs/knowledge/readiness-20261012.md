@@ -1,4 +1,24 @@
-# Knowledge readiness decision — 2026-10-12
+# Knowledge readiness record — 2026-10-12
+
+## Approved no-map follow-up
+
+The user has approved a first release **without a map, with geographic statistics
+retained**. The current candidate uses `poetry-only`, exactly two poetry files and
+`map-enabled: false`. The authenticated map route is disabled503; Web has no map
+request or panel. The original map permission is deferred to any future
+map-enabled release and is no longer a condition of this candidate.
+
+See [current contract](business-upgrade.md), [two-file assets](assets.md),
+[NOT EXECUTED release instructions](release-instructions.md), and
+[focused no-map verification](validation.md). The actual two-file coordinator
+upgrade/interrupted recovery completed; [sanitized integration receipt](no-map-integration-evidence.json)
+binds the new4748…JAR and source9e42…with44tables/3media/5files preserved.
+Production adapters and fixture limits remain explicit. The final source heads and CI/review
+state are the existing PRs, not the earlier heads/artifacts below. Changed Core
+JAR/Web builds need their own evidence; the earlier map-enabled preview is retained
+unchanged and cannot be presented as the no-map build.
+
+## Prior readiness evidence (before the no-map changes)
 
 The three unmerged PR candidates are ready for owner review; the current complete
 feature release is **not authorized or ready for production activation**. This
@@ -9,7 +29,7 @@ change data, create accounts or submit provider/task/upload requests.
 Related PRs: [Web #14](https://github.com/Hang-666-star/auralink-web/pull/14),
 [Core #10](https://github.com/Hang-666-star/auralink-core-api/pull/10),
 [Deploy #3](https://github.com/Hang-666-star/auralink-deploy/pull/3).
-Web head remains `675d96d875000bb557772236ddedd6863df2f464`; Core head remains
+At that review, Web head was `675d96d875000bb557772236ddedd6863df2f464`; Core head was
 `e65847f507e73dd6857e9c497861c647a8b2af9b`. Deploy started this review at
 `4baca34735e2e690960e9170dbd9e850b0c8bfb3`; the PR's subsequent scoped fix contains
 this report. See the PR checks for its exact current head and required CI.
@@ -67,7 +87,10 @@ execution at application source `a6875b63fafd4c8658d79f6ec040d08b7cad04ad`:
 | neverAggregatesHiddenFieldsOrLiteralZeroAndTracksCoverage | 0.527s | Private projection, literal0, coverage and mutation isolation |
 | explicitUnknownsAreUnavailableAndUnmatchedSamplesStayVisible | 0.095s | Unknown/unmatched/unavailable rules |
 
-Current Core head's421 Java/SQL/test/pom files match that source exactly. Original
+At that earlier review, Core's421 Java/SQL/test/pom files matched that source exactly.
+The no-map loader/configuration changes invalidate that whole-tree equivalence
+claim for the current artifact; unchanged painting SQL/store/aggregator/tests
+continue to reuse their specifically recorded PG evidence. Original
 Surefire XML SHA256 is
 `256073750db779a03ddf7a05ec47486399e38e7b110bc74b4d199c16db876e96`;
 original build-log SHA256 is
@@ -80,10 +103,10 @@ prior1.585s warm-cache/single-concurrency HTTP timing is not production acceptan
 
 | Artifact | Identity | Evidence boundary |
 | --- | --- | --- |
-| Local Knowledge JAR | SHA256 `550d1bb9e71717226d5fc7645c94b6cb21234ecbfff44aa3fdae4f1f9c1a84d8`, 69632545bytes | Actual isolated PG/HTTP/browser and this real Java integration; app sourcea687 is unchanged in Core PR |
+| Local Knowledge JAR | SHA256 `550d1bb9e71717226d5fc7645c94b6cb21234ecbfff44aa3fdae4f1f9c1a84d8`, 69632545bytes | Actual isolated PG/HTTP/browser and this real Java integration; historical app sourcea687; superseded by no-map candidate |
 | Core CI JAR | SHA256 `d0e1e52200868fee41e6e5fef148b787c4b384b75f2a9183536c566d0bd9ea4f`, run38206922984/attempt1 | Distinct bytes;17 Maven/7PG skips and packaged verifier, not the local JAR's live integration |
 | Core CI ZIP | artifact11727108903, SHA256 `e8870e8ed598204e950d5162968213e078b59cf4ea642f5e15789997ad3b1ff9` | API metadata confirms available; not redownloaded; PR synthetic merge tree equals Core head, not release identity |
-| Web preview | BUILD_ID `ZTBFk3sN5MNNwckmM-GNR`; sourcea5e5 application unchanged in675d |83 tests, desktop/narrow UI; loopback API build, not production bundle |
+| Web preview | BUILD_ID `ZTBFk3sN5MNNwckmM-GNR`; historical sourcea5e5 application, unchanged in675d before no-map |83 tests, desktop/narrow UI; loopback API build, not production bundle |
 
 All are PR candidates. Final source/run/attempt/artifact identities and private
 approvals must be rebound after normal reviewed release promotion. This report
@@ -123,18 +146,11 @@ activation window, not to a claim of completed production acceptance here.
 
 1. **Review owner — Hang-666-star:** review each latest PR head and CI. No agent can
    substitute approval or merge under this task.
-2. **Authorized project/release operator — map decision:** the exact DataV/Gaode
-   export remains permission-unresolved. [Aliyun](https://help.aliyun.com/zh/datav/datav-7-0/user-guide/datav-geoatlas-widgets/)
-   describes learning/exchange and points rights questions to Gaode.
-   [Gaode terms](https://lbs.amap.com/pages/terms/)3.3/3.5/4.12/7 and
-   [service licensing](https://lbs.amap.com/pages/authorization/) do not establish
-   this project's server hosting/authenticated GeoJSON redistribution permission.
-   Use the official3.5 work-order channel or an existing applicable agreement for
-   the exact hash, entity/audience, storage/API/display, term and attribution.
-   Alternatively explicitly approve a licensed replacement, or statistics+graph
-   with map unavailable. The latter requires a separately reviewed reduced
-   capability/two-file manifest/expected503/no-map-bytes acceptance and UI reason;
-   current V2 requires all three files and map200 and must not be bypassed.
+2. **First-release map scope — decided:** the user approved no map with geography
+   retained. The explicit two-file profile/configuration, disabled route, UI and
+   acceptance checks implement that decision. No further map-scope approval is
+   requested. Rights for the prior DataV/Gaode asset remain unresolved only for a
+   later map-enabled release; do not include it in the no-map delivery.
 3. **Asset administrator and R25:** review [assets.md](assets.md), choose a new
    durable source/version root, bind observed service/nativePG contracts and
    readonly tmpfs/capabilities, and record authorized reboot restoration. Files
@@ -151,6 +167,6 @@ activation window, not to a claim of completed production acceptance here.
    reimport is permitted.
 
 The local preview remains available and unchanged. Technical review preparation
-is complete with explicit integration boundaries; map permission, human approval,
-final release identities, asset delivery and production-stage checks remain
+is complete with explicit integration boundaries; owner review, final release
+identities, two-file asset delivery and production-stage checks remain
 specific decisions/actions, not reasons to repeat migration implementation.

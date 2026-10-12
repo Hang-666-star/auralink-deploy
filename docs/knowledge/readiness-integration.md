@@ -1,3 +1,54 @@
+# Approved no-map V2 integration — 2026-10-12
+
+The actual modified coordinator successfully upgraded the exact `60c5…` baseline
+to the new no-map Core PR candidate, accepted its real HTTP/PG/runtime identity,
+and restored its compatible baseline. A second coordinator was terminated after
+its first real JAR replacement; a fresh instance restored the interrupted state,
+and repeated recovery verified a NOOP. The prior preview was not restarted.
+
+The sanitized [no-map receipt](no-map-integration-evidence.json) records:
+
+- Core source `9e42dc66c8c0ccd79b7e640af859ef51e07c48c9`, local JAR SHA256
+  `4748f2bef01b551bcb7a6c1eec4175abcb814395f6dbd56afbed7e37ee551d12`,
+  69632689bytes. This evidence covers those bytes, not a differing CI/release JAR.
+- Manifest schemaVersion2 / `poetry-only`, exactly two real poetry files on a
+  dedicated globally read-only tmpfs and no map packaged. The policy/configuration
+  binds false. Actual authenticated responses are painting/poetry200 and the
+  specific map-disabled503; all three anonymous routes remain401. Actual graph
+  hashes match, with711 unique nodes/609 relationships, Gallery6, author names2,
+  one authenticated public-field sample and media JSON error behavior preserved.
+- Actual Publisher/CoreRuntime/BusinessGuard/R25Storage, Java17 processes and
+  verified lifecycle Java methods, private PostgreSQL16, fsync/CAS/flock,
+  zero candidate capabilities/NoNewPrivs and filesystem/process attestation.
+  Lock and foreign lifecycle-process conflicts are refused.
+- COMMITTED, current/committed NOOPs, RESTORED and restored NOOPs; injected abrupt
+  exit after the first real JAR write is recovered from its durable INSTALL_INTENT.
+  All44 public-table signatures,11 retained tables and3 synthetic media remain
+  unchanged, and all5 application files restore exactly. Populated production
+  user/task history is not represented by these fixtures.
+
+Runner time34.519seconds, total invocation36.773seconds, exit0. Timing is the small
+isolated transaction exercise, not performance acceptance. Reproduction uses the
+same namespace invocation described below with the reviewed Git-external
+`evidence/nomap/integration/run.py`; inspect the script and its inputs before any
+rerun. Its exact SHA and result/execution hashes are in the receipt. No production
+paths, credentials, sessions or private approval records are included in that
+committed summary. Real snapshots and application JARs remain outside Git.
+
+The paired c5ea/AI/Tunnel/watchdog, original production launcher/profile and real
+approval provenance remain adapters exactly as listed in the receipt. The
+17-file controller installation is separately covered by existing storage/fault
+tests and was not executed by this harness. Database fixtures contain10 paintings;
+there was no new10k run or production reconciliation. Isolated recovery does not
+establish production rollout or rollback acceptance.
+
+---
+
+> Historical map-enabled integration receipt. Its recorded source/module/JAR
+> hashes and three-file asset contract predate the approved no-map follow-up.
+> Reuse only unchanged mechanism evidence; the workspace no-map readiness record
+> identifies the new two-file execution and candidate artifact separately.
+
 # Knowledge V2 focused readiness integration — 2026-10-12
 
 The actual application transaction completed against the existing `60c5…` baseline and unchanged `550d…` Knowledge candidate, then restored the baseline. A second operation was killed immediately after its first actual JAR replacement. A fresh coordinator recovered the mixed installation and verified the restored runtime. This is isolated pre-release evidence, not production rollout or rollback acceptance.

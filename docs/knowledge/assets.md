@@ -1,102 +1,114 @@
-# Git-external Knowledge assets and recovery
+# Git-external Knowledge assets: approved poetry-only first release
 
-Authoritative manifest and validator are in reviewed [Core #10](https://github.com/Hang-666-star/auralink-core-api/pull/10),
-head `e65847f507e73dd6857e9c497861c647a8b2af9b`:
-[manifest](https://github.com/Hang-666-star/auralink-core-api/blob/e65847f507e73dd6857e9c497861c647a8b2af9b/docs/knowledge-assets-manifest.json),
-[verification tool](https://github.com/Hang-666-star/auralink-core-api/blob/e65847f507e73dd6857e9c497861c647a8b2af9b/scripts/verify-knowledge-assets.py),
-[provenance](https://github.com/Hang-666-star/auralink-core-api/blob/e65847f507e73dd6857e9c497861c647a8b2af9b/docs/knowledge-map-provenance.md).
-The manifest SHA-256 is `f8892ca72c911ec074f87346fb2ffea696895ba10aad999adff2d88503cc5674`.
-Only this metadata belongs in Git; the real bundle does not.
+The user approved a first release without the geographic map. Geographic
+statistics, their sample definitions, painting charts and all poetry interactions
+remain. The frontend makes no map request. This is an explicit two-file release
+profile, not a waiver for missing required files.
 
-| File | Bytes | SHA-256 |
+The authoritative manifest and read-only tool live in [Core #10](https://github.com/Hang-666-star/auralink-core-api/pull/10):
+`docs/knowledge-assets-manifest.json` and `scripts/verify-knowledge-assets.py`.
+The manifest is schemaVersion2, releaseProfile `poetry-only`; SHA-256
+`4a11c993bb55f4e2b8cbafc1b42e10a869bff4879ab0e3c110a8d324cbd863a5`. Real runtime data remains outside Git.
+
+| Required file | Bytes | SHA-256 |
 | --- | ---: | --- |
 | poetry-graph.json | 528422 | `899511b6b7d02e6ba515986db651c67b3702497d2031bdbb75029c34491da2c0` |
 | poetry-stats.json | 20130 | `27e91284d28c05c9b7dde9fcb4181c713761d3c2eebf84816b45c9f7d9af7501` |
-| china.json | 582521 | `206cf7fd5acba4bb08d9586899acc144cea2b29d9e93ff70f93895c5e5ffde77` |
 
 Inherited Web source revision: `aa1da07086696835de7c361886115e602a88c471`,
-`public/data/`. Graph: 711 unique nodes/609 edges, no dangling endpoints;
-map: 35 features. The original GraphML is still missing. This snapshot is not
-PostgreSQL graph storage, verified extraction knowledge, or an automatic extension
-of the completed painting imports.
+`public/data/`. The graph has711 unique nodes and609 edges, no dangling endpoints;
+stats agree. Original GraphML remains missing, upstream extraction accuracy is not
+verified, and this file snapshot is not PostgreSQL graph persistence or an
+automatic extension of painting imports.
 
-## Installation inputs and procedure
+## Bound configuration and installation
 
-This is a procedure for a future separately authorized asset administrator.
-The publisher checks and selects files; it does not create mounts, copy assets,
-remount writable, download data, or repair files. No production command was run.
+V2 private policy requires `upgrade.release_profile: poetry-only` and exactly:
 
-1. Resolve the map permission condition below. Select a new immutable version
-   root from the actual installation contract, outside Git and release artifacts.
-   Record actual asset owner, application account/UID/GID/groups, native DB
-   credential owner, mount capabilities and effective JVM configuration. Do not
-   infer pgpass ownership from root or from the asset owner.
-2. Retain a durable verified three-file source bundle outside the runtime mount,
-   with administrator-controlled access. Prepare a complete new version; never
-   overwrite an online graph/stats pair. For the existing root Java lifecycle,
-   the supported mode is `readonly-filesystem-capdrop`: mount a dedicated tmpfs
-   exactly at the approved version root, with `nosuid,nodev,noexec`. Copy the three
-   files while offline, verify their hashes/lengths, set approved owner/group,
-   files `0440` and directory `0550`, then remount the **entire filesystem** `ro`.
-   Ordinary read-only bind mounts and image/disk-backed filesystems are refused
-   by this initial contract. Mountinfo must show root `/`, filesystem `tmpfs`,
-   and both mount/superblock `ro` flags. Reject nested mounts or extra files.
-3. Bind the root and the three SHA-256 values to the four exact Knowledge
-   properties in the private policy/application after-image. Bind the manifest
-   itself by SHA. Verify the original Core tool with `--check-environment` for
-   bytes/configuration; check only the selected environment keys, never print
-   secrets or source a production env into a development shell.
-4. For a non-root compatible installation, the original tool's
-   `--require-read-only` checks service read/traverse without write, including
-   ancestors. **That flag intentionally rejects UID0 and is not weakened.** For
-   the explicit root mode, the new Deploy asset/sandbox checks instead require
-   the globally read-only tmpfs and then observe the actual launched Java with
-   all five capability sets zero and NoNewPrivs=1. A preflight filesystem result
-   alone does not claim the candidate process has already dropped capabilities.
-5. Use the approved Core transaction to switch JAR/configuration; require real
-   authenticated HTTP acceptance before CURRENT. The publisher's private session
-   is separately provisioned; no login/token issuance occurs in the publisher.
+```yaml
+auralink.knowledge.snapshot-root: /operator-selected/immutable-version-root
+auralink.knowledge.graph-sha256: 899511b6b7d02e6ba515986db651c67b3702497d2031bdbb75029c34491da2c0
+auralink.knowledge.stats-sha256: 27e91284d28c05c9b7dde9fcb4181c713761d3c2eebf84816b45c9f7d9af7501
+auralink.knowledge.map-enabled: false
+```
 
-The isolated procedure exercised actual Linux mounts, OS ownership, service
-readability and kernel write refusals, plus same-JVM restore behavior. Its chosen
-fixture accounts/UIDs are not production configuration recommendations.
+The path above is an example, not a selected production root. No `china-sha256`
+property or map-permission evidence belongs in this profile. Policy, complete
+configuration before/after digests, manifest SHA and `releaseProfile`, directory
+file set and runtime acceptance must agree. Extra map files in the selected
+release asset root are refused; historical private maps elsewhere are untouched.
+Core's disabled route will not open a map even if one remains on disk. It returns
+an authenticated JSON503 `KNOWLEDGE_SNAPSHOT_UNAVAILABLE` with message
+“此版本未启用地理底图；地域统计仍可读取。”; anonymous access remains401.
+A generic missing-file503 or a map200 does not pass no-map acceptance.
 
-## Failure and recovery
+The following procedure is for a future separately authorized asset administrator,
+not a publisher fallback. No production installation was executed.
 
-Application loaders return JSON503 `KNOWLEDGE_SNAPSHOT_UNAVAILABLE` for absent,
-unconfigured, corrupt, inconsistent or unreadable assets without internal paths.
-The graph and map fail independently and remain retryable. The release acceptance
-must refuse an unavailable required asset rather than describe partial readiness
-as a complete Knowledge release. Unexpected configuration parameters remain400;
-anonymous Knowledge requests remain401.
+1. Select a new immutable version root and a durable two-file source bundle
+   outside Git, application releases and the runtime mount. Bind the actual
+   asset owner and service UID/GID/groups from the installation contract. Native
+   PostgreSQL/pgpass has a separate installation account; never assume root:root
+   or copy a historical UID. Do not modify existing Guide/source files.
+2. Prepare a complete new version offline. For the observed root Java lifecycle,
+   use the supported `readonly-filesystem-capdrop` contract: a dedicated tmpfs
+   mounted exactly at the approved version root, filesystem root `/`, with
+   `nosuid,nodev,noexec`. Copy only the two poetry files, verify hashes/lengths,
+   approved owner/group, files0440 and directory0550, then remount the **whole
+   filesystem** read-only. Both mount and superblock must show ro. Read-only bind
+   mounts, writable backing filesystems, nested mounts and extra files refuse.
+3. Run the reviewed Core tool against the exact schemaVersion2 manifest;
+   `--check-environment` additionally requires root, graph SHA, stats SHA and
+   `AURALINK_KNOWLEDGE_MAP_ENABLED=false`, with no china SHA. This validates the
+   supplied environment only, not the effective Spring configuration. Bind the
+   actual four dotted properties and full application after-image in V2 policy.
+4. The Core tool's `--require-read-only` remains strict non-root POSIX verification
+   and intentionally refuses UID0. V2 instead proves the globally readonly tmpfs
+   for root mode and, after launch, all five capability sets zero/NoNewPrivs=1.
+   No guessed service identity or fixture receipt substitutes that observation.
+5. Use the reviewed V1 bootstrap→V2→Core transaction, then c5ea Web. Core acceptance
+   requires stats/poetry200, graph IDs/endpoints/hashes, geographic field coverage,
+   Gallery denominator, public projection, anonymous401 and exact disabled map503.
+   Private acceptance sessions remain existing authorized inputs, never generated
+   or printed by the publisher.
 
-For a bad delivery, leave the running complete volume intact. Provision a new
-complete, verified version offline and obtain approval for its configuration
-identity before a coordinated switch. Never remount an active asset volume rw to
-patch files one by one. Retain the prior complete volume/bundle for recovery.
+## Required-asset failure and recovery
 
-Tmpfs contents disappear on reboot/unmount. Re-provision the same approved bytes
-from the durable external bundle, verify the manifest, ownership and global ro
-mount before starting the business candidate. If that cannot be proven, startup
-refuses; recover using the journal's freshly rechecked compatible baseline. Do
-not disable hashes or restore/delete database/media data to make recovery pass.
+A missing/corrupt/incorrectly hashed/unreadable required poetry file still refuses
+V2 preflight or owned launch. Core's lazy loader independently returns safe
+JSON503 without paths; painting statistics remain separate. Restore the exact
+reviewed graph/stats pair and permissions before retrying. No-map mode does not
+ignore required-asset validation or waive SHA/permission/identity/approval checks.
 
-## Exact map permission remains unresolved
+For bad delivery, leave the running complete volume intact. Provision a complete
+verified version offline and approve its configuration before a coordinated
+switch; never remount the active volume rw to patch individual files. Preserve
+the prior complete pair/bundle. Tmpfs is lost on reboot/unmount: authorized
+restoration copies both approved files from the durable bundle, rechecks bytes,
+owner/readability and whole-filesystem ro before business startup. If assets
+cannot be proven, refuse startup and use the journal's freshly rechecked compatible
+baseline/configuration. Do not restore a database, remove media, discard tasks or
+reimport huaniao to make a compatibility hash pass.
 
-The inherited map matches the official
-[DataV export](https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json)
-except for one terminal newline. Download availability is not a redistribution
-license. [Aliyun GeoAtlas documentation](https://help.aliyun.com/zh/datav/datav-7-0/user-guide/datav-geoatlas-widgets/)
-attributes the data to Gaode and limits the stated use to learning/exchange.
-The current [Gaode terms](https://lbs.amap.com/pages/terms/) and
-[technical-service licensing agreement](https://lbs.amap.com/pages/authorization/)
-do not establish ArtLIVE's permission to store and rehost these exact bytes via
-an authenticated GeoJSON API. An ECharts license or ordinary API purchase does
-not establish that permission either.
+Previous three-file OS permission evidence remains historical proof of unchanged
+sandbox mechanisms. The current two-file tests/real-process integration are
+identified separately in [validation](validation.md); neither is production
+activation or rollback acceptance.
 
-An authorized owner must provide an applicable existing agreement or obtain
-rights-holder confirmation covering the exact SHA, deployment entity/audience,
-server storage, API redistribution, geography display, term and attribution/map
-review requirements. Store the actual agreement privately and bind its approved
-reference. If permission cannot be obtained, a separately approved licensed-map
-migration is an option. This PR neither removes/replaces the map nor publishes it.
+## Future map-enabled release only
+
+The map license issue is **deferred, not granted**. The inherited map matches the
+[DataV export](https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json) except
+one terminal newline. [Aliyun documentation](https://help.aliyun.com/zh/datav/datav-7-0/user-guide/datav-geoatlas-widgets/)
+attributes it to Gaode with learning/exchange language. Existing
+[Gaode terms](https://lbs.amap.com/pages/terms/) and
+[technical-service agreement](https://lbs.amap.com/pages/authorization/) do not
+establish this project's independent hosting/authenticated API distribution
+permission; ECharts licensing or download availability does not supply it.
+
+A future map release requires a separately approved exact asset/use permission or
+a licensed replacement. The retained V2 `map-enabled` profile still requires
+literal true, the additional china SHA, exact three-file schemaVersion2 manifest,
+map-permission evidence hash and authenticated map200/hash verification. No-map
+approvals cannot select that profile or be relabeled as permission. This release
+neither packages, installs nor serves the private map.

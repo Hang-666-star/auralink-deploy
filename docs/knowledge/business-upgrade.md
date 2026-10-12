@@ -9,6 +9,11 @@ attribute. The current application changes require V2:
   GET `/api/v1/knowledge/painting-statistics`, `/poetry-graph`, `/china-map`.
 - [Web #14](https://github.com/Hang-666-star/auralink-web/pull/14): Knowledge views.
 
+The approved first-release scope is `poetry-only`: no geographic map, with all
+geographic statistics and other painting/poetry features retained. Web makes no
+map request. Core keeps the authenticated route but returns the specific disabled
+JSON503 even if an old map exists outside the release asset root.
+
 Nothing in this document approves a production candidate, installs a controller,
 changes an enable flag, or authorizes release promotion. Owner review, actual
 release artifact identities, installation preflight and a separately authorized
@@ -26,10 +31,15 @@ runs before staging; no uploaded script is executed.
 
 The private policy also binds all twelve Core publisher/validator/installer
 modules, the exact lifecycle/launcher/guard sources, the paired Web commit,
-review/evidence digests, asset manifest and permission evidence, the application
+review/evidence digests, the selected release profile and asset manifest, the application
 configuration before/after digests, and the native PostgreSQL installation.
-`upgrade.evidence.map_permission_sha256` is a required private approval reference,
-not a claim that permission has been obtained for this candidate.
+`upgrade.release_profile` must be `poetry-only` for this candidate. The exact
+configuration and schemaVersion2 manifest must agree with it; no map bytes, hash
+or map-permission evidence is permitted in that asset/configuration set.
+The separately supported `map-enabled` profile still requires all three files,
+`map-enabled: true`, `china-sha256` and real
+`upgrade.evidence.map_permission_sha256`. Its unresolved license is deferred;
+it is not a condition of this first release.
 
 There is no approval generator or auto-discovery of acceptable hashes. The
 operator must deliver separately reviewed private records and pass the approved
@@ -42,8 +52,10 @@ JARs do not exist yet; feature heads and the local preview JAR are not substitut
 
 ## Configuration, data and runtime
 
-Only four `auralink.knowledge.*` properties are added: `snapshot-root`,
-`graph-sha256`, `stats-sha256`, `china-sha256`. The transformer preserves every
+The no-map profile adds exactly four `auralink.knowledge.*` properties:
+`snapshot-root`, `graph-sha256`, `stats-sha256`, `map-enabled: false`. The boolean
+is mandatory in V2 even though Core defaults to false. `china-sha256` is forbidden
+in this profile; the future map-enabled profile adds it as a fifth property. The transformer preserves every
 original configuration byte and verifies the complete approved after digest.
 Ambiguous/preexisting Knowledge configuration fails closed. Spring YAML binding
 of these dotted properties was checked with the actual candidate dependencies.
@@ -151,9 +163,12 @@ rollback allowance. V1 retains its existing source health checks.
 
 `ACCEPTANCE_SESSION.json` is a private existing-session input containing a `bearer`
 value. The publisher does not log in, mint JWTs, create accounts, or print the
-session. Missing/expired sessions or unavailable graph/map endpoints prevent
-acceptance. Read-only acceptance verifies Gallery/statistics denominator equality,
-field coverage, author-name bounds, graph hashes/IDs/endpoints, map identity,
+session. Missing/expired sessions or unavailable required poetry endpoints prevent
+acceptance. No-map acceptance requires the authenticated map route to return the
+specific disabled503 envelope without geographic data; a generic missing-file
+503 or an unexpected200 refuses. All three anonymous routes must remain401. Read-only acceptance verifies Gallery/statistics denominator equality,
+field coverage, author-name bounds, graph hashes/IDs/endpoints, the selected map
+capability response (disabled503 here; exact map identity only in map-enabled),
 anonymous 401, authenticated public-field samples and media JSON errors. Earlier
 isolated private-field mutation evidence is reused, not reproduced in production.
 
@@ -168,8 +183,9 @@ isolated private-field mutation evidence is reused, not reproduced in production
    JAR/Web/configuration identities, locks/recovery state, service credentials,
    ownership, native PostgreSQL and source-module cache state. Bind final reviewed
    release Actions artifacts and private acceptance/retention evidence.
-3. Resolve exact map redistribution permission. Deliver all three Git-external
-   files, verified manifest and a complete dedicated read-only asset filesystem.
+3. Deliver only the two required Git-external poetry files, verified
+   `poetry-only` manifest and a complete dedicated read-only asset filesystem.
+   Keep historical private map files untouched outside this release asset root.
    Verify actual service identity, effective JVM configuration and reboot recovery.
 4. Install/upgrade the reviewed Deploy controller under the same R25 coordination;
    verify its recovery contract. Publish Core/configuration/assets first. Require

@@ -19,7 +19,7 @@ import types
 SCHEMA = 'R25_CORE_BUSINESS_POLICY_V2'
 RECORD_SCHEMA = 'R25_CORE_BUSINESS_RELEASE_V2'
 REPOSITORY = 'Hang-666-star/auralink-core-api'
-CONFIG_KEYS = ('snapshot-root', 'graph-sha256', 'stats-sha256', 'china-sha256')
+CONFIG_KEYS = ('snapshot-root', 'graph-sha256', 'stats-sha256', 'map-enabled', 'china-sha256')
 ASSETS = {'poetry-graph.json': 'graph-sha256', 'poetry-stats.json': 'stats-sha256',
           'china.json': 'china-sha256'}
 RUNTIME_MODULES = frozenset(('core_acceptance.py', 'core_business.py', 'core_publish.py',
@@ -47,6 +47,16 @@ class Refused(RuntimeError):
 def must(value, reason):
     if not value:
         raise Refused(reason)
+
+
+def config_keys(profile):
+    must(profile in ('poetry-only', 'map-enabled'), 'business_release_profile')
+    return CONFIG_KEYS if profile == 'map-enabled' else CONFIG_KEYS[:-1]
+
+
+def required_assets(profile):
+    config_keys(profile)
+    return ASSETS if profile == 'map-enabled' else {key: value for key, value in ASSETS.items() if key != 'china.json'}
 
 
 def digest(value, length=64):
@@ -146,6 +156,8 @@ def validate_policy(policy):
     must(set(policy['runtime_modules']) == RUNTIME_MODULES, 'business_module_binding')
     up = policy.get('upgrade')
     must(type(up) is dict and up.get('capability') == 'knowledge-read-v1', 'business_capability')
+    keys = config_keys(up.get('release_profile'))
+    map_enabled = up['release_profile'] == 'map-enabled'
     identity = up.get('candidate')
     must(type(identity) is dict and set(identity) == {'repository', 'commit_sha', 'github_run_id', 'github_run_attempt',
          'artifact_sha256', 'artifact_bytes', 'payload_fingerprint'} and identity['repository'] == REPOSITORY,
@@ -170,9 +182,10 @@ def validate_policy(policy):
     digest(config['before_sha256']); digest(config['after_sha256'])
     must(config['before_sha256'] == legacy['application_configuration_sha256'] and
          config['before_sha256'] != config['after_sha256'], 'business_configuration_baseline')
-    must(type(config['knowledge']) is dict and set(config['knowledge']) == set(CONFIG_KEYS), 'business_configuration_keys')
+    must(type(config['knowledge']) is dict and set(config['knowledge']) == set(keys), 'business_configuration_keys')
+    must(config['knowledge']['map-enabled'] is map_enabled, 'business_configuration_profile')
     absolute(config['knowledge']['snapshot-root'])
-    for key in CONFIG_KEYS[1:]:
+    for key in required_assets(up['release_profile']).values():
         digest(config['knowledge'][key])
     for part in ('assets', 'compatibility'):
         value = up.get(part)
@@ -182,10 +195,13 @@ def validate_policy(policy):
     asset = up['assets']
     owner([asset.get('owner_uid'), asset.get('owner_gid')])
     evidence = up.get('evidence')
-    must(type(evidence) is dict and set(evidence) == {'review_id', 'compatibility_sha256', 'acceptance_sha256', 'map_permission_sha256'},
+    evidence_keys = {'review_id', 'compatibility_sha256', 'acceptance_sha256'}
+    if map_enabled:
+        evidence_keys.add('map_permission_sha256')
+    must(type(evidence) is dict and set(evidence) == evidence_keys,
          'business_review_evidence')
     must(type(evidence['review_id']) is str and re.fullmatch('[a-zA-Z0-9_-]{8,128}', evidence['review_id']), 'business_review_identity')
-    for key in ('compatibility_sha256', 'acceptance_sha256', 'map_permission_sha256'):
+    for key in evidence_keys - {'review_id'}:
         digest(evidence[key])
     installation = policy.get('installation')
     must(type(installation) is dict, 'business_installation_contract')
@@ -248,7 +264,7 @@ def render_configuration(before, policy):
          not any(line.startswith(('---', '...', '%')) for line in text.splitlines()),
          'business_configuration_unsupported')
     after = before + (b'' if before.endswith(b'\n') else b'\n') + b'\n# R25 reviewed Knowledge configuration\n'
-    for key in CONFIG_KEYS:
+    for key in config_keys(policy['upgrade']['release_profile']):
         after += ('auralink.knowledge.' + key + ': ' + json.dumps(config['knowledge'][key], ensure_ascii=True) + '\n').encode()
     must(sha(after) == config['after_sha256'], 'business_configuration_after')
     return after
@@ -280,12 +296,14 @@ def verify_assets(policy):
     # POSIX mode proof rejects ACL-bearing paths rather than guessing effective
     # permission. CAP_DAC_OVERRIDE/root runtimes are not a read-only service.
     asset = up['assets']
+    assets = required_assets(up['release_profile'])
     manifest = strict_json(read_bound(asset['manifest_path'], expected=asset['manifest_sha256'],
         expected_owner=policy['installation']['private_owner'], mode=0o600))
-    must(type(manifest) is dict and manifest.get('schemaVersion') == 1 and
-         type(manifest.get('artifacts')) is list and len(manifest['artifacts']) == 3, 'business_asset_manifest')
+    must(type(manifest) is dict and manifest.get('schemaVersion') == 2 and
+         manifest.get('releaseProfile') == up['release_profile'] and
+         type(manifest.get('artifacts')) is list and len(manifest['artifacts']) == len(assets), 'business_asset_manifest')
     entries = {x.get('filename'): x for x in manifest['artifacts'] if type(x) is dict}
-    must(set(entries) == set(ASSETS), 'business_asset_file_set')
+    must(set(entries) == set(assets), 'business_asset_file_set')
     for parent in (root, *root.parents):
         info = parent.lstat()
         must(stat.S_ISDIR(info.st_mode) and not parent.is_symlink() and _mode_access(info, service) & 1,
@@ -295,9 +313,9 @@ def verify_assets(policy):
         must(not any(x.startswith('system.posix_acl_') for x in os.listxattr(parent)), 'business_asset_acl_requires_review')
     info = root.lstat()
     must((info.st_uid, info.st_gid) == (asset['owner_uid'], asset['owner_gid']) and
-         stat.S_IMODE(info.st_mode) == 0o550 and set(x.name for x in root.iterdir()) == set(ASSETS),
+         stat.S_IMODE(info.st_mode) == 0o550 and set(x.name for x in root.iterdir()) == set(assets),
          'business_asset_root_identity')
-    for name, key in ASSETS.items():
+    for name, key in assets.items():
         item, path = entries[name], root / name
         must(type(item.get('bytes')) is int and 0 < item['bytes'] <= 32*1024*1024 and
              item.get('sha256') == up['configuration']['knowledge'][key], 'business_asset_manifest_binding')
@@ -309,8 +327,8 @@ def verify_assets(policy):
         raw = read_bound(path, expected=item['sha256'], expected_owner=(asset['owner_uid'], asset['owner_gid']),
                          mode=0o440, limit=32*1024*1024)
         must(len(raw) == item['bytes'], 'business_asset_size')
-    return {'schema': 'R25_KNOWLEDGE_ASSETS_VERIFIED_V1', 'manifest_sha256': asset['manifest_sha256'],
-            'files': 3, 'service_readonly': not root_isolation,
+    return {'schema': 'R25_KNOWLEDGE_ASSETS_VERIFIED_V2', 'manifest_sha256': asset['manifest_sha256'],
+            'release_profile': up['release_profile'], 'files': len(assets), 'service_readonly': not root_isolation,
             'filesystem': filesystem, 'candidate_process_capability_proof_required': root_isolation}
 
 
