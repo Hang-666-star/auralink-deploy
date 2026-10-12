@@ -42,12 +42,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise Refused('http_redirect_refused')
 
 
-def request(path, accept='application/json'):
+def request(path, accept='application/json', *, bearer=None, port=19080):
     must(type(path) is str and path.startswith('/api/v1/') and
          not any(x in path for x in ('://', '\\', '\r', '\n', '#')), 'fixed_http_path')
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    req = urllib.request.Request('http://127.0.0.1:19080' + path,
-                                 headers={'Accept': accept}, method='GET')
+    must(type(port) is int and 1024 <= port <= 65535, 'loopback_http_port')
+    headers = {'Accept': accept}
+    if bearer is not None:
+        must(type(bearer) is str and re.fullmatch(r'[A-Za-z0-9._~-]{16,8192}', bearer), 'acceptance_session_format')
+        headers['Authorization'] = 'Bearer ' + bearer
+    req = urllib.request.Request('http://127.0.0.1:' + str(port) + path,
+                                 headers=headers, method='GET')
     try:
         response = opener.open(req, timeout=8)
     except urllib.error.HTTPError as error:
@@ -113,4 +118,84 @@ def verify_http(query, *, minimum_total=1, get=request):
             'private_projection_pg_sample_count': len(samples),
             'authenticated_detail_projection': 'NOT_EXERCISED_NO_TEST_CREDENTIAL',
             'private_projection_live_samples': 0,
+            'write_requests': 0, 'provider_requests': 0}
+
+
+KNOWLEDGE_PATHS = ('/api/v1/knowledge/painting-statistics',
+                   '/api/v1/knowledge/poetry-graph', '/api/v1/knowledge/china-map')
+
+
+def authenticated_request(token):
+    must(type(token) is str and re.fullmatch(r'[A-Za-z0-9._~-]{16,8192}', token), 'acceptance_session_format')
+    def get(path, accept='application/json'):
+        return request(path, accept, bearer=token)
+    return get
+
+
+def verify_knowledge_http(query, policy, *, get=request, get_authenticated):
+    """Candidate-specific GET-only acceptance. Return counts/hashes, never data/session.
+
+    Stable bracketing Gallery reads detect a changing denominator; prior isolated
+    public-field mutation tests remain required reviewed evidence, not a claim
+    that production annotations were mutated by this read-only check.
+    """
+    for path in KNOWLEDGE_PATHS:
+        denied = json_response(path, 401, get=get)
+        must(denied.get('code') == 'UNAUTHORIZED' and denied.get('status') == 401,
+             'knowledge_anonymous_contract')
+    before = json_response('/api/v1/paintings?page=0&size=1', get=get)
+    stats, graph, china = [json_response(path, get=get_authenticated) for path in KNOWLEDGE_PATHS]
+    after = json_response('/api/v1/paintings?page=0&size=1', get=get)
+    count = stats.get('population', {}).get('count')
+    must(stats.get('schemaVersion') == 1 and stats.get('population', {}).get('key') == 'gallery-displayable'
+         and type(count) is int and count >= 0 and
+         count == before.get('totalElements') == after.get('totalElements'), 'knowledge_gallery_denominator')
+    names = stats.get('authorNames', {})
+    must(type(names.get('count')) is int and type(names.get('eligibleRecords')) is int and
+         0 <= names['count'] <= names['eligibleRecords'] <= count, 'knowledge_author_name_coverage')
+    metrics = stats.get('metrics')
+    must(type(metrics) is dict and set(metrics) == {'dynasty', 'category', 'geography', 'style',
+         'imagery', 'sentiment', 'sentimentByDynasty'}, 'knowledge_metric_contract')
+    for name, metric in metrics.items():
+        must(type(metric) is dict and metric.get('status') in {'available', 'unavailable'}, 'knowledge_metric_status')
+        eligible, missing, unmatched = (metric.get(k) for k in
+            ('eligibleRecords', 'missingOrRestrictedRecords', 'unmatchedRecords'))
+        must(all(type(x) is int for x in (eligible, missing, unmatched)) and
+             0 <= unmatched <= eligible <= count and missing == count - eligible, 'knowledge_metric_coverage')
+        limit = 12 if name == 'style' else 40 if name == 'imagery' else 50
+        must(type(metric.get('items')) is list and len(metric['items']) <= limit, 'knowledge_metric_bound')
+    knowledge = policy['upgrade']['configuration']['knowledge']
+    must(graph.get('schemaVersion') == 1 and graph.get('source') == 'legacy-poetry-snapshot' and
+         graph.get('graphSha256') == knowledge['graph-sha256'] and
+         graph.get('statsSha256') == knowledge['stats-sha256'], 'knowledge_graph_identity')
+    nodes, links = graph.get('nodes'), graph.get('links')
+    must(type(nodes) is list and type(links) is list and
+         graph.get('nodeCount') == len(nodes) <= 2000 and graph.get('edgeCount') == len(links) <= 10000,
+         'knowledge_graph_counts')
+    ids = [node.get('id') for node in nodes if type(node) is dict]
+    must(len(ids) == len(nodes) and all(type(x) is str for x in ids) and len(set(ids)) == len(ids),
+         'knowledge_graph_ids')
+    must(all(type(link) is dict and link.get('source') in ids and link.get('target') in ids for link in links),
+         'knowledge_graph_endpoints')
+    must(china.get('type') == 'FeatureCollection' and china.get('sha256') == knowledge['china-sha256'] and
+         type(china.get('features')) is list and 0 < len(china['features']) <= 100, 'knowledge_map_identity')
+    samples = json.loads(query(PRIVATE_SAMPLE_SQL))
+    must(type(samples) is list and len(samples) <= 3, 'private_projection_sample_shape')
+    for sample in samples:
+        identity = sample.get('painting_id', '')
+        must(type(identity) is str and re.fullmatch('[0-9a-f-]{36}', identity), 'private_projection_identity')
+        detail = json_response('/api/v1/paintings/' + identity, get=get_authenticated)
+        if sample.get('hidden_sequence'):
+            must(detail.get('sourceSequence') in (None, ''), 'authenticated_private_sequence')
+        if sample.get('hidden_image'):
+            must(detail.get('imageStorageName') in (None, ''), 'authenticated_private_image')
+        annotations = detail.get('annotations')
+        must(type(annotations) is list and all(type(a) is dict and a.get('visibility') == 'public'
+             for a in annotations), 'authenticated_annotation_projection')
+    return {'schema': 'R25_KNOWLEDGE_HTTP_ACCEPTANCE_V1', 'gallery_total': count,
+            'author_name_count': names['count'], 'node_count': len(nodes), 'edge_count': len(links),
+            'map_features': len(china['features']), 'graph_sha256': graph['graphSha256'],
+            'stats_sha256': graph['statsSha256'], 'china_sha256': china['sha256'],
+            'authenticated_projection_samples': len(samples),
+            'projection_mutation_test': 'REUSED_REVIEWED_ISOLATED_EVIDENCE_NOT_RUN_ON_PRODUCTION',
             'write_requests': 0, 'provider_requests': 0}

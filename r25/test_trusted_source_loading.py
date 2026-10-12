@@ -7,9 +7,11 @@ import ast
 from contextlib import nullcontext
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import py_compile
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -198,6 +200,28 @@ class TrustedSourceTests(unittest.TestCase):
         os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
         return cached
 
+    def test_direct_publisher_cli_refuses_stale_sibling_cache_before_import(self):
+        bundle = self.root / "cli-bundle"
+        bundle.mkdir()
+        script = bundle / "core_publish.py"
+        script.write_bytes(Path(core_publish.__file__).read_bytes())
+        marker = bundle / "sibling-imported"
+        new_raw = ("from pathlib import Path\nVALUE = 2\nPath(" + repr(str(marker)) +
+                   ").write_text(str(VALUE))\nraise RuntimeError('sibling must not execute')\n").encode()
+        cached = self.cached_rewrite(bundle / "core_release_guard.py",
+            new_raw.replace(b"VALUE = 2", b"VALUE = 1"), new_raw)
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        environment.pop("PYTHONPYCACHEPREFIX", None)
+        result = subprocess.run([sys.executable, "-B", str(script), "status"],
+            cwd=bundle, env=environment, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 65, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(json.loads(result.stderr), {"outcome": "REFUSED",
+            "reason": "controller_bundle_bytecode_cache"})
+        self.assertFalse(marker.exists(), "Refusal must precede source or bytecode imports")
+        self.assertTrue(cached.exists(), "Refusal must preserve stale cache evidence")
+
     def test_server_packaged_verifier_ignores_existing_old_cache(self):
         candidate_path = Path(__file__).with_name("core-release-candidate.py")
         module = guard.source_module(candidate_path, "server_candidate_cache_fixture", candidate_path.read_bytes())
@@ -235,7 +259,8 @@ class TrustedSourceTests(unittest.TestCase):
         files = FileFixture(self.root)
         rt = SimpleNamespace(storage=files, identity=files.file_identity,
             read=files.read_private_record, lease=lambda: nullcontext(),
-            verify_candidate=lambda value: checked(value.artifact_sha256 == artifact, "stage_artifact"))
+            verify_candidate=lambda value: checked(value.artifact_sha256 == artifact, "stage_artifact"),
+            require_terminal_component_transactions=lambda: None)
         with patch.object(core_publish, "__file__", str(bundle / "core_publish.py")), \
              patch.object(core_publish, "INCOMING", incoming), patch.object(guard, "STORE", store), \
              patch.object(guard, "read_file", side_effect=lambda path, **_: Path(path).read_bytes()), \

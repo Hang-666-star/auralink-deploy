@@ -214,6 +214,39 @@ class OverlayTests(unittest.TestCase):
         with self.assertRaises(overlay.OverlayRefused):
             overlay.render_controls(lifecycle + b"\n", launcher)
 
+    def test_business_overlay_preserves_every_byte_except_hook_and_bound_launcher_hash(self):
+        root = Path(__file__).resolve().parent / 'fixtures'
+        old = overlay.render_controls((root / 'lifecycle_adapter.py.snapshot').read_bytes(),
+                                      (root / 'r25-production-java-launch.py.snapshot').read_bytes())
+        result = overlay.render_business_controls(old.lifecycle, old.launcher)
+        recovered_launcher = overlay.replace_once(result.launcher, overlay.BUSINESS_LAUNCH_HOOK,
+                                                    overlay.BUSINESS_LAUNCH_MARKER, 'undo_business_hook')
+        recovered_lifecycle = overlay.replace_once(result.lifecycle,
+            ("JAVA_LAUNCH = '" + result.launcher_sha256 + "'\n").encode(),
+            ("JAVA_LAUNCH = '" + old.launcher_sha256 + "'\n").encode(), 'undo_business_digest')
+        self.assertEqual((recovered_lifecycle, recovered_launcher), (old.lifecycle, old.launcher))
+        self.assertIn(b'os.execve(args[0], args, environment)', result.launcher)
+        with self.assertRaisesRegex(overlay.OverlayRefused, 'audited_v1_source_sha256_mismatch'):
+            overlay.render_business_controls(result.lifecycle, result.launcher)
+        with self.assertRaisesRegex(overlay.OverlayRefused, 'audited_v1_source_sha256_mismatch'):
+            overlay.render_business_controls(old.lifecycle, old.launcher + b'\n')
+
+    def test_business_launch_hook_runs_after_eligibility_and_is_absent_for_v1(self):
+        source = b''.join(line[8:] for line in overlay.BUSINESS_LAUNCH_HOOK.splitlines(keepends=True))
+        calls = []
+        class V1:
+            def require_backend_eligible(self, backend, descriptor):
+                calls.append(('eligible', backend, descriptor))
+        class V2(V1):
+            def prepare_launch(self, backend, descriptor):
+                calls.append(('sandbox', backend, descriptor))
+        scope = {'backend_hash': 'fixture-sha', 'descriptor': 42}
+        exec(compile(source, '<isolated-launcher-hook>', 'exec'), dict(scope, recovery=V1()))
+        self.assertEqual(calls, [('eligible', 'fixture-sha', 42)])
+        calls.clear()
+        exec(compile(source, '<isolated-launcher-hook>', 'exec'), dict(scope, recovery=V2()))
+        self.assertEqual(calls, [('eligible', 'fixture-sha', 42), ('sandbox', 'fixture-sha', 42)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -152,6 +152,7 @@ class RuntimeMethodTests(unittest.TestCase):
             started.start()
             self.addCleanup(started.stop)
         patches = [
+            patch.object(runtime_module.guard, "policy", return_value={"schema": runtime_module.guard.POLICY_SCHEMA}),
             patch.object(runtime_module.secrets, "token_hex", return_value="1" * 32),
             patch.object(runtime_module.shutil, "disk_usage", return_value=SimpleNamespace(free=10 * 1024**3)),
             patch.object(runtime_module.guard, "read_file", side_effect=lambda path, **_: Path(path).read_bytes()),

@@ -20,7 +20,7 @@ import sys
 import time
 
 import core_release_guard as guard
-from core_acceptance import IDLE_SQL, verify_http
+from core_acceptance import IDLE_SQL, verify_http, verify_knowledge_http, authenticated_request
 from publisher_transaction import Release, RecoveryPlan, Refused
 from r25_storage import R25Storage
 
@@ -112,7 +112,9 @@ class CoreRuntime:
 
     def require_lease(self):
         must(self.fd is not None, 'lease_required')
-        guard.production().legacy.verify_lease(self.fd)
+        active_guard = guard.production()
+        (active_guard.verify_lease if isinstance(active_guard, guard.BusinessGuard) else
+         active_guard.legacy.verify_lease)(self.fd)
 
     def verify_controls(self):
         policy = guard.policy()
@@ -120,9 +122,17 @@ class CoreRuntime:
         must(type(files) is dict and set(files) == {
             'lifecycle_adapter.py', 'r25-production-java-launch.py', 'core_release_guard.py'},
             'controller_policy')
+        owner = ((1000, 1000) if policy.get('schema') != guard.BUSINESS_POLICY_SCHEMA else
+                 tuple(policy['installation']['controller_owner']))
         for name, digest in files.items():
             self.identity(ROOT / 'operations' / name, expected_sha256=digest,
-                          expected_owner=(1000, 1000), expected_mode=0o700)
+                          expected_owner=owner, expected_mode=0o700)
+        if policy.get('schema') == guard.BUSINESS_POLICY_SCHEMA:
+            for name, digest in policy['runtime_modules'].items():
+                module_path = ROOT / 'operations/r25-publisher' / name
+                guard.reject_legacy_bytecode(module_path)
+                self.identity(module_path, expected_sha256=digest)
+            return
         self.identity(ROOT / 'operations/huaniao_recovery_guard.py',
                       expected_sha256=guard.LEGACY_GUARD_SHA, expected_owner=(1000, 1000), expected_mode=0o700)
         self.identity(ROOT / 'operations/postgres_access.py', expected_sha256=ACCESS_SHA,
@@ -134,7 +144,8 @@ class CoreRuntime:
         if operations not in sys.path:
             sys.path.insert(0, operations)
         module = load_module(ROOT / 'operations/lifecycle_adapter.py', 'normal_release_lifecycle',
-                             guard.policy()['controllers']['lifecycle_adapter.py'])
+                             guard.policy()['controllers']['lifecycle_adapter.py'],
+                             owner=tuple(guard.policy().get('installation', {}).get('controller_owner', [1000, 1000])))
         os.environ['R25_ROOT'] = str(ROOT)
         os.environ['ARTLIVE_R25_HANDOFF_CONFIG'] = str(ROOT / 'runtime/handoff-control.env')
         engine = module.production(self.fd)
@@ -149,6 +160,9 @@ class CoreRuntime:
 
     def query(self, sql):
         self.require_lease()
+        value = guard.policy()
+        if value.get('schema') == guard.BUSINESS_POLICY_SCHEMA:
+            return guard.business_module(value).readonly_query(value, sql, self.fd)
         path = ROOT / 'operations/postgres_access.py'
         self.identity(path, expected_sha256=ACCESS_SHA, expected_owner=(1000, 1000), expected_mode=0o700)
         access = load_module(path, 'normal_release_postgres_access', ACCESS_SHA)
@@ -184,7 +198,14 @@ class CoreRuntime:
 
     def require_compatible(self, target):
         self.verify_candidate(target)
-        # The policy grants precisely 60c5's unchanged executable capability.
+        value = guard.policy()
+        if value.get('schema') == guard.BUSINESS_POLICY_SCHEMA:
+            module = guard.business_module(value)
+            module.verify_compatibility(value, self.query)
+            if target.artifact_sha256 == value['upgrade']['candidate']['artifact_sha256']:
+                module.verify_assets(value)
+            return
+        # V1 still grants precisely the independently equivalent capability.
         guard.production().legacy.require_backend_eligible(guard.BASELINE, self.fd)
 
     def require_no_active_work(self):
@@ -204,7 +225,65 @@ class CoreRuntime:
         engine.tunnel.status()
         for name, port in (('guide', 19084), ('critic', 19085)):
             must(engine.active(name, port) is not None, 'paired_service_unavailable')
-        self.last_http = verify_http(self.query)
+        self.verify_process_contract(process, release)
+        self.last_http = self.acceptance(release)
+
+    def verify_process_contract(self, process, release):
+        value = guard.policy()
+        if value.get('schema') == guard.BUSINESS_POLICY_SCHEMA:
+            record = guard.release_record(release.artifact_sha256, release.accepted_record_sha256, release.commit_sha)
+            ticks = process.get('ticks')
+            must((type(ticks) is int and ticks > 0) or
+                 (type(ticks) is str and ticks.isdecimal() and int(ticks) > 0), 'business_process_start_ticks')
+            guard.business_module(value).verify_process(value, process['pid'], int(ticks),
+                LIVE_FILES['application'], require_isolated=record.get('schema') == guard.BUSINESS_RECORD_SCHEMA)
+
+    def verify_rollback_source(self, release):
+        """Verify the exact owned V2 source without requiring its feature health.
+
+        An expired acceptance session or lost external asset must not prevent
+        stopping a still-identifiable committed process. This does not authorize
+        starting it, relax target compatibility, or accept unknown live bytes.
+        V1 retains its complete existing verify_current prerequisite.
+        """
+        self.require_lease()
+        value = guard.policy()
+        record = guard.release_record(release.artifact_sha256, release.accepted_record_sha256, release.commit_sha)
+        if value.get('schema') != guard.BUSINESS_POLICY_SCHEMA or record.get('schema') != guard.BUSINESS_RECORD_SCHEMA:
+            return self.verify_current(release)
+        must(self.tx is not None, 'business_rollback_transaction_required')
+        plan = self.load_recovery(self.tx)
+        must(plan.phase == 'COMMITTED' and plan.candidate == release and self.current() == release,
+             'business_rollback_source_binding')
+        self.validate_recovery(plan)
+        document = self.snapshot_document(plan)
+        for name, path in LIVE_FILES.items():
+            self.identity(path, expected_sha256=document['files'][name]['after_sha256'])
+        self.verify_controls()
+        handoff = env_values(guard.read_file(LIVE_FILES['handoff'],
+            expected=document['files']['handoff']['after_sha256']))
+        must(handoff.get('R25_BACKEND_SHA256') == release.artifact_sha256, 'business_rollback_handoff')
+        engine = self.engine(partial_recovery=True)
+        process = engine.active('java', 19080)
+        must(process is not None, 'business_rollback_java_identity_required')
+        ticks = process.get('ticks')
+        must((type(ticks) is int and ticks > 0) or
+             (type(ticks) is str and ticks.isdecimal() and int(ticks) > 0), 'business_process_start_ticks')
+        guard.business_module(value).verify_process(value, process['pid'], int(ticks),
+            LIVE_FILES['application'], require_isolated=False)
+
+    def acceptance(self, release, minimum_total=1):
+        receipt = verify_http(self.query, minimum_total=minimum_total)
+        record = guard.release_record(release.artifact_sha256, release.accepted_record_sha256, release.commit_sha)
+        if record.get('schema') == guard.BUSINESS_RECORD_SCHEMA:
+            value = guard.policy()
+            token_record = self.read(STORE / 'ACCEPTANCE_SESSION.json')
+            token = token_record.get('bearer')
+            # This is an existing separately provisioned acceptance session, not
+            # login/token issuance. Invalid/expired credentials fail acceptance.
+            receipt['knowledge'] = verify_knowledge_http(
+                self.query, value, get_authenticated=authenticated_request(token))
+        return receipt
 
     def snapshot(self, current, candidate):
         self.require_lease()
@@ -237,7 +316,14 @@ class CoreRuntime:
         handoff = replace_env(guard.read_file(LIVE_FILES['handoff']),
                               {'R25_BACKEND_SHA256': candidate.artifact_sha256})
         self.storage.atomic_write_bytes(folder / 'after/handoff', handoff)
-        self.storage.atomic_copy_file(LIVE_FILES['application'], folder / 'after/application', files['application']['sha256'])
+        if record.get('schema') == guard.BUSINESS_RECORD_SCHEMA:
+            value = guard.policy()
+            must(asdict(current) == value['upgrade']['baseline_release'], 'business_upgrade_baseline_changed')
+            after = guard.business_module(value).render_configuration(
+                guard.read_file(LIVE_FILES['application'], expected=files['application']['sha256']), value)
+            self.storage.atomic_write_bytes(folder / 'after/application', after)
+        else:
+            self.storage.atomic_copy_file(LIVE_FILES['application'], folder / 'after/application', files['application']['sha256'])
         for name in ('release-jar', 'preview-jar'):
             # Backups are separate complete files. Candidate reference remains
             # immutable in releases/ and is rechecked before every copy.
@@ -271,6 +357,17 @@ class CoreRuntime:
         return snapshot_id
 
     def require_terminal_component_transactions(self):
+        self.require_terminal_application_transactions()
+        active_path = STORE / 'CONTROL_UPGRADE_ACTIVE.json'
+        if active_path.exists():
+            active = self.read(active_path)
+            must(active.get('schema') == 'R25_CORE_CONTROLLER_UPGRADE_ACTIVE_V1', 'controller_upgrade_active_schema')
+            approval = guard.digest_value(active.get('approval_sha256'))
+            journal = self.read(STORE / 'controller-upgrades' / approval / 'journal.json')
+            must(journal.get('approval_sha256') == approval and journal.get('phase') in {'INSTALLED', 'RESTORED'},
+                 'controller_upgrade_recovery_required_before_publication')
+
+    def require_terminal_application_transactions(self):
         self.require_lease()
         for component in ('core', 'ai'):
             root = ROOT / 'runtime' / (component + '-publications')
@@ -334,8 +431,11 @@ class CoreRuntime:
         engine = self.engine()
         must(engine.backend == release.artifact_sha256, 'start_release_binding')
         engine.start_java_locked(self.fd)
+        process = engine.active('java', 19080)
+        must(process is not None, 'started_java_identity')
+        self.verify_process_contract(process, release)
         minimum = self.read(self.transaction_folder(self.tx) / 'snapshot.json')['minimum_total']
-        receipt = verify_http(self.query, minimum_total=minimum)
+        receipt = self.acceptance(release, minimum_total=minimum)
         process = engine.active('java', 19080)
         must(process is not None, 'started_java_identity')
         receipt.update({'commit_sha': release.commit_sha, 'artifact_sha256': release.artifact_sha256,
