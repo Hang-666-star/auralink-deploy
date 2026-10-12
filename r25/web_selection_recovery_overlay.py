@@ -102,7 +102,7 @@ def manifest(rendered):
             'unchanged': ['c5ea supervisor', 'shared lock', 'retained inner deployer',
                           'Next process ownership', 'R25 selector', 'database and media'],
             'recovery_scope': 'Only exact saved/live old pair plus successful unchanged selector status; no lifecycle or selection writes',
-            'installation': 'Separately reviewed coordinated three-file and handoff binding installation; no installer provided'}
+            'installation': 'Use separately reviewed docs/knowledge/web-recovery-installation.md one-off four-file procedure; renderer never installs'}
 
 
 def read_input(path):

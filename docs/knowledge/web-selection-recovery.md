@@ -85,7 +85,7 @@ configuration; the c5ea helper hash can change without changing that V1 policy.
 The whole post-patch handoff SHA must be recorded for V2 approval; it is not
 invented here because V1 is not yet installed.
 
-The separately authorized installation plan must acquire the existing
+The executable, separately authorized [four-file installation/recovery procedure](web-recovery-installation.md) acquires the existing
 `/root/autodl-tmp/auralink-web-deploy/runtime/frontend-deployment.lock`, verify its
 open inode, confirm no active Core/AI/controller/Web transaction, retain exact
 backups of the **three files plus complete post-V1 handoff**, and bind all four
@@ -135,7 +135,7 @@ performed by this helper.
   Receipt: `web-selection-recovery-evidence.json`.
 - Actual inner deployment/build/rollback was not replayed; three-file installation
   and four-file interruption recovery remain a separately reviewed installation
-  plan. The namespace test does not establish production recovery or rollout.
+  plan. The namespace test does not establish production recovery or rollout. The separate one-off installation procedure has eight real-filesystem fixture tests (including injected partial installation and strict restoration); service/production records in those eight tests are synthetic.
 - Related accepted UI: Web #15; Core #10 and Deploy #3 provide the existing
   no-map migration. This repair does not change application UI, API, data or
   deployment ownership. A concurrent Core launcher import fix is a separate PR.
