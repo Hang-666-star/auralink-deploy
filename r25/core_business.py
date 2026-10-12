@@ -49,9 +49,19 @@ def must(value, reason):
         raise Refused(reason)
 
 
-def config_keys(profile):
+def config_keys(profile, isolation=None):
     must(profile in ('poetry-only', 'map-enabled'), 'business_release_profile')
-    return CONFIG_KEYS if profile == 'map-enabled' else CONFIG_KEYS[:-1]
+    keys = CONFIG_KEYS if profile == 'map-enabled' else CONFIG_KEYS[:-1]
+    if isolation == 'sealed-memfd-capdrop':
+        must(profile == 'poetry-only', 'business_sealed_profile')
+        return keys + ('snapshot-transport',)
+    return keys
+
+
+def isolation_mode(policy):
+    installation = policy.get('installation')
+    service = installation.get('service') if type(installation) is dict else None
+    return service.get('isolation') if type(service) is dict else None
 
 
 def required_assets(profile):
@@ -156,7 +166,7 @@ def validate_policy(policy):
     must(set(policy['runtime_modules']) == RUNTIME_MODULES, 'business_module_binding')
     up = policy.get('upgrade')
     must(type(up) is dict and up.get('capability') == 'knowledge-read-v1', 'business_capability')
-    keys = config_keys(up.get('release_profile'))
+    keys = config_keys(up.get('release_profile'), isolation_mode(policy))
     map_enabled = up['release_profile'] == 'map-enabled'
     identity = up.get('candidate')
     must(type(identity) is dict and set(identity) == {'repository', 'commit_sha', 'github_run_id', 'github_run_attempt',
@@ -184,6 +194,9 @@ def validate_policy(policy):
          config['before_sha256'] != config['after_sha256'], 'business_configuration_baseline')
     must(type(config['knowledge']) is dict and set(config['knowledge']) == set(keys), 'business_configuration_keys')
     must(config['knowledge']['map-enabled'] is map_enabled, 'business_configuration_profile')
+    if isolation_mode(policy) == 'sealed-memfd-capdrop':
+        must(config['knowledge'].get('snapshot-transport') == 'sealed-memfd-v1',
+             'business_sealed_transport')
     absolute(config['knowledge']['snapshot-root'])
     for key in required_assets(up['release_profile']).values():
         digest(config['knowledge'][key])
@@ -214,8 +227,17 @@ def validate_policy(policy):
          all(type(x) is int and x >= 0 for x in service['groups']) and service['gid'] in service['groups'],
          'business_service_readonly_identity')
     must((service.get('isolation') == 'nonroot-posix' and service['uid'] > 0) or
-         (service.get('isolation') == 'readonly-filesystem-capdrop' and service['uid'] == 0),
+         (service.get('isolation') in ('readonly-filesystem-capdrop', 'sealed-memfd-capdrop') and service['uid'] == 0),
          'business_service_isolation_contract')
+    if service['isolation'] == 'sealed-memfd-capdrop':
+        sealed = asset.get('sealed_owner')
+        must(type(sealed) is dict and set(sealed) == {'account', 'uid', 'gid'} and
+             type(sealed['account']) is str and re.fullmatch('[a-zA-Z_][a-zA-Z0-9_-]*', sealed['account']) and
+             type(sealed['uid']) is int and sealed['uid'] > 0 and
+             type(sealed['gid']) is int and sealed['gid'] == service['gid'],
+             'business_sealed_owner_contract')
+    else:
+        must('sealed_owner' not in asset, 'business_sealed_owner_mode')
     pg = installation.get('postgres')
     must(type(pg) is dict and pg.get('host') == '127.0.0.1' and type(pg.get('port')) is int and
          1024 <= pg['port'] <= 65535, 'business_postgres_endpoint')
@@ -264,7 +286,7 @@ def render_configuration(before, policy):
          not any(line.startswith(('---', '...', '%')) for line in text.splitlines()),
          'business_configuration_unsupported')
     after = before + (b'' if before.endswith(b'\n') else b'\n') + b'\n# R25 reviewed Knowledge configuration\n'
-    for key in config_keys(policy['upgrade']['release_profile']):
+    for key in config_keys(policy['upgrade']['release_profile'], isolation_mode(policy)):
         after += ('auralink.knowledge.' + key + ': ' + json.dumps(config['knowledge'][key], ensure_ascii=True) + '\n').encode()
     must(sha(after) == config['after_sha256'], 'business_configuration_after')
     return after
@@ -279,6 +301,16 @@ def _service(policy):
     return service
 
 
+def sealed_owner(policy):
+    value = validate_policy(policy)['upgrade']['assets'].get('sealed_owner')
+    must(isolation_mode(policy) == 'sealed-memfd-capdrop' and type(value) is dict,
+         'business_sealed_owner_contract')
+    account = pwd.getpwnam(value['account'])
+    must(account.pw_uid == value['uid'] and account.pw_uid != policy['installation']['service']['uid'],
+         'business_sealed_owner_drift')
+    return {'owner_uid': value['uid'], 'owner_gid': value['gid']}
+
+
 def _mode_access(info, service):
     if info.st_uid == service['uid']:
         return (info.st_mode >> 6) & 7
@@ -287,14 +319,9 @@ def _mode_access(info, service):
     return info.st_mode & 7
 
 
-def verify_assets(policy):
+def asset_specs(policy):
+    """Read the exact approved manifest; no source-path or transport substitution."""
     up = validate_policy(policy)['upgrade']
-    service = _service(policy)
-    root = absolute(up['configuration']['knowledge']['snapshot-root'])
-    root_isolation = service['isolation'] == 'readonly-filesystem-capdrop'
-    filesystem = sandbox_module(policy).filesystem_proof(root) if root_isolation else None
-    # POSIX mode proof rejects ACL-bearing paths rather than guessing effective
-    # permission. CAP_DAC_OVERRIDE/root runtimes are not a read-only service.
     asset = up['assets']
     assets = required_assets(up['release_profile'])
     manifest = strict_json(read_bound(asset['manifest_path'], expected=asset['manifest_sha256'],
@@ -304,32 +331,65 @@ def verify_assets(policy):
          type(manifest.get('artifacts')) is list and len(manifest['artifacts']) == len(assets), 'business_asset_manifest')
     entries = {x.get('filename'): x for x in manifest['artifacts'] if type(x) is dict}
     must(set(entries) == set(assets), 'business_asset_file_set')
+    specs = {}
+    for name, key in assets.items():
+        item = entries[name]
+        must(type(item.get('bytes')) is int and 0 < item['bytes'] <= 32*1024*1024 and
+             item.get('sha256') == up['configuration']['knowledge'][key], 'business_asset_manifest_binding')
+        specs[name] = {'bytes': item['bytes'], 'sha256': item['sha256']}
+    return specs
+
+
+def _verified_assets(policy, *, include_bytes=False):
+    up = validate_policy(policy)['upgrade']
+    service = _service(policy)
+    root = absolute(up['configuration']['knowledge']['snapshot-root'])
+    filesystem_mode = service['isolation'] == 'readonly-filesystem-capdrop'
+    sealed_mode = service['isolation'] == 'sealed-memfd-capdrop'
+    protected_runtime = filesystem_mode or sealed_mode
+    filesystem = sandbox_module(policy).filesystem_proof(root) if filesystem_mode else None
+    if sealed_mode:
+        sealed_owner(policy)
+    # Sealed mode verifies the durable source at every preflight/relaunch. It
+    # explicitly does NOT call a root-owned source directory globally read-only.
+    # Only the inherited kernel-sealed anonymous byte objects have that guarantee.
+    asset = up['assets']
+    specs = asset_specs(policy)
     for parent in (root, *root.parents):
         info = parent.lstat()
         must(stat.S_ISDIR(info.st_mode) and not parent.is_symlink() and _mode_access(info, service) & 1,
              'business_asset_parent_permissions')
-        if not root_isolation:
+        if not protected_runtime:
             must(info.st_uid != service['uid'] and not _mode_access(info, service) & 2, 'business_asset_parent_permissions')
         must(not any(x.startswith('system.posix_acl_') for x in os.listxattr(parent)), 'business_asset_acl_requires_review')
     info = root.lstat()
     must((info.st_uid, info.st_gid) == (asset['owner_uid'], asset['owner_gid']) and
-         stat.S_IMODE(info.st_mode) == 0o550 and set(x.name for x in root.iterdir()) == set(assets),
+         stat.S_IMODE(info.st_mode) == 0o550 and set(x.name for x in root.iterdir()) == set(specs),
          'business_asset_root_identity')
-    for name, key in assets.items():
-        item, path = entries[name], root / name
-        must(type(item.get('bytes')) is int and 0 < item['bytes'] <= 32*1024*1024 and
-             item.get('sha256') == up['configuration']['knowledge'][key], 'business_asset_manifest_binding')
+    material = {}
+    for name, item in specs.items():
+        path = root / name
         info = path.lstat()
         must(not any(x.startswith('system.posix_acl_') for x in os.listxattr(path)) and
              _mode_access(info, service) & 4 and not _mode_access(info, service) & 2, 'business_asset_file_permissions')
-        if not root_isolation:
+        if not protected_runtime:
             must(info.st_uid != service['uid'], 'business_asset_file_permissions')
         raw = read_bound(path, expected=item['sha256'], expected_owner=(asset['owner_uid'], asset['owner_gid']),
                          mode=0o440, limit=32*1024*1024)
         must(len(raw) == item['bytes'], 'business_asset_size')
-    return {'schema': 'R25_KNOWLEDGE_ASSETS_VERIFIED_V2', 'manifest_sha256': asset['manifest_sha256'],
-            'release_profile': up['release_profile'], 'files': len(assets), 'service_readonly': not root_isolation,
-            'filesystem': filesystem, 'candidate_process_capability_proof_required': root_isolation}
+        if include_bytes:
+            material[name] = {**item, 'raw': raw}
+    receipt = {'schema': 'R25_KNOWLEDGE_ASSETS_VERIFIED_V2', 'manifest_sha256': asset['manifest_sha256'],
+               'release_profile': up['release_profile'], 'files': len(specs), 'service_readonly': not protected_runtime,
+               'filesystem': filesystem, 'candidate_process_capability_proof_required': protected_runtime}
+    if sealed_mode:
+        receipt.update({'transport': 'sealed-memfd-v1', 'durable_source_readonly': False,
+                        'candidate_sealed_descriptors_required': True})
+    return receipt, material
+
+
+def verify_assets(policy):
+    return _verified_assets(policy)[0]
 
 
 def acceptance_queries(policy):
@@ -500,9 +560,12 @@ def verify_process(policy, pid, start_ticks, configuration_path, *, proc_root=Pa
          sorted(set(int(x) for x in status.get('Groups', '').split()) | {service['gid']}) == sorted(set(service['groups'])),
          'business_process_service_identity')
     isolation = None
-    if service['isolation'] == 'readonly-filesystem-capdrop':
+    if service['isolation'] in ('readonly-filesystem-capdrop', 'sealed-memfd-capdrop'):
         if require_isolated:
-            isolation = sandbox_module(policy).verify(pid, policy['upgrade']['configuration']['knowledge']['snapshot-root'],
+            if service['isolation'] == 'sealed-memfd-capdrop':
+                isolation = sandbox_module(policy).verify_sealed(pid, asset_specs(policy), proc_root=proc_root, **sealed_owner(policy))
+            else:
+                isolation = sandbox_module(policy).verify(pid, policy['upgrade']['configuration']['knowledge']['snapshot-root'],
                                                         proc_root=proc_root)
     else:
         must(status.get('CapEff') is not None and int(status['CapEff'], 16) == 0, 'business_process_service_identity')
@@ -537,12 +600,16 @@ def prepare_asset_sandbox(policy):
 
     A verified non-root service already uses POSIX separation. The legacy root
     launcher uses a separately provisioned, globally read-only tmpfs and drops
-    all privileges in its existing PID. No asset mount, file or policy is written.
+    all privileges in its existing PID. Sealed mode instead creates only anonymous inherited kernel objects. No asset mount, disk file or policy is written.
     """
     validate_policy(policy)
     service = _service(policy)
     must((os.geteuid(), os.getegid()) == (service['uid'], service['gid']), 'business_launcher_service_identity')
-    receipt = verify_assets(policy)
-    if service['isolation'] == 'readonly-filesystem-capdrop':
-        sandbox_module(policy).prepare(policy['upgrade']['configuration']['knowledge']['snapshot-root'])
+    if service['isolation'] == 'sealed-memfd-capdrop':
+        receipt, material = _verified_assets(policy, include_bytes=True)
+        sandbox_module(policy).prepare_sealed(material, **sealed_owner(policy))
+    else:
+        receipt = verify_assets(policy)
+        if service['isolation'] == 'readonly-filesystem-capdrop':
+            sandbox_module(policy).prepare(policy['upgrade']['configuration']['knowledge']['snapshot-root'])
     return receipt

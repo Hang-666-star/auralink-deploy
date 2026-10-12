@@ -1,5 +1,10 @@
 # Git-external Knowledge assets: approved poetry-only first release
 
+The explicitly selected [sealed descriptor transport](sealed-assets.md) is a
+reviewed-code alternative for poetry-only root installations without mount
+privileges. It requires the matching Core adapter and new candidate approval;
+it does not relax the tmpfs contract below or run as a fallback.
+
 The user approved a first release without the geographic map. Geographic
 statistics, their sample definitions, painting charts and all poetry interactions
 remain. The frontend makes no map request. This is an explicit two-file release
