@@ -85,9 +85,57 @@ class BusinessContractTests(unittest.TestCase):
 
     def query_inputs(self):
         pg = self.policy['installation']['postgres']
+        acceptance = Path(business.__file__).with_name('core_acceptance.py').read_bytes()
+        self.write('core_acceptance.py', acceptance)
+        self.policy['runtime_modules']['core_acceptance.py'] = business.sha(acceptance)
+        location = patch.object(business, '__file__', str(self.root / 'core_business.py'))
+        location.start()
+        self.addCleanup(location.stop)
         self.write('psql', b'fixture-only').chmod(0o700)
         self.write('fixture.pgpass', b'localhost:25432:fixture:fixture:synthetic-not-a-secret\n')
         self.write('native-control.env', ('R25_NATIVE_SERVICE_USER='+pg['credential_account']+'\n').encode())
+
+    def test_acceptance_sql_loads_without_publisher_import_path_or_module_execution(self):
+        import subprocess
+        import sys
+        self.query_inputs()
+        source = Path(__file__).with_name('core_business.py')
+        self.write('core_business.py', source.read_bytes())
+        self.write('policy.json', encoded(self.policy))
+        # A fresh process loads the business module like the official launcher.
+        # The acceptance source's imports would fail without the publisher path.
+        script = """import importlib.util,json,pathlib,sys
+root=pathlib.Path(sys.argv[1])
+sys.modules['core_acceptance']=object()
+spec=importlib.util.spec_from_file_location('bound_business',root/'core_business.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+queries=module.acceptance_queries(json.loads((root/'policy.json').read_text()))
+assert len(queries)==2 and all(q.startswith('BEGIN READ ONLY;') for q in queries)
+assert sys.modules['core_acceptance'].__class__ is object
+"""
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', script, str(self.root)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_acceptance_sql_source_hash_permissions_and_literal_shape_fail_closed(self):
+        self.query_inputs()
+        path = self.root / 'core_acceptance.py'
+        original = path.read_bytes()
+        path.write_bytes(original + b'\n# changed source\n')
+        with self.assertRaisesRegex(business.Refused, 'file_digest'):
+            business.acceptance_queries(self.policy)
+        path.write_bytes(original); path.chmod(0o644)
+        with self.assertRaisesRegex(business.Refused, 'file_mode'):
+            business.acceptance_queries(self.policy)
+        path.chmod(0o600)
+        for raw in (b'IDLE_SQL="x"\n', b'IDLE_SQL=1\nPRIVATE_SAMPLE_SQL="y"\n',
+                    b'IDLE_SQL="x"\nIDLE_SQL="z"\nPRIVATE_SAMPLE_SQL="y"\n',
+                    b'IDLE_SQL=make_query()\nPRIVATE_SAMPLE_SQL="y"\n'):
+            with self.subTest(source=raw):
+                path.write_bytes(raw)
+                self.policy['runtime_modules']['core_acceptance.py'] = business.sha(raw)
+                with self.assertRaisesRegex(business.Refused, 'acceptance_sql_literal'):
+                    business.acceptance_queries(self.policy)
 
     def test_policy_and_candidate_bind_every_identity_field(self):
         self.assertIs(business.validate_policy(self.policy), self.policy)
