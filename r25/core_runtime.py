@@ -163,6 +163,11 @@ class CoreRuntime:
         value = guard.policy()
         if value.get('schema') == guard.BUSINESS_POLICY_SCHEMA:
             return guard.business_module(value).readonly_query(value, sql, self.fd)
+        return self._legacy_query(sql)
+
+    def _legacy_query(self, sql):
+        """Exact V1 helper path; caller must establish its installation context."""
+        self.require_lease()
         path = ROOT / 'operations/postgres_access.py'
         self.identity(path, expected_sha256=ACCESS_SHA, expected_owner=(1000, 1000), expected_mode=0o700)
         access = load_module(path, 'normal_release_postgres_access', ACCESS_SHA)

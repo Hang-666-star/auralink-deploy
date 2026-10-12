@@ -11,10 +11,47 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
+
+# First installation has no installed policy with which to bind imports. Its
+# reviewed, private bundle must not execute pre-existing sibling bytecode. -B
+# suppresses cache writes but would still read a matching cache without this.
+BOOTSTRAP_MODULES = (
+    'install_core_controller.py', 'core_release_guard.py', 'control_overlay.py',
+    'core_acceptance.py', 'core_runtime.py', 'publisher_transaction.py',
+    'r25_storage.py',
+)
+
+
+def reject_bootstrap_bytecode(folder):
+    folder = Path(folder)
+    cache = folder / '__pycache__'
+    if cache.is_symlink():
+        raise ValueError('bootstrap_bundle_bytecode_cache')
+    for name in BOOTSTRAP_MODULES:
+        source = folder / name
+        candidates = {source.with_suffix('.pyc'), source.with_suffix('.pyo')}
+        if cache.exists():
+            candidates.update(cache.glob(source.stem + '.*.pyc'))
+            candidates.update(cache.glob(source.stem + '.*.pyo'))
+        for optimization in ('', '1', '2'):
+            candidates.add(Path(importlib.util.cache_from_source(str(source), optimization=optimization)))
+        if any(path.exists() or path.is_symlink() for path in candidates):
+            raise ValueError('bootstrap_bundle_bytecode_cache')
+
+
+if __name__ == '__main__':
+    try:
+        reject_bootstrap_bytecode(Path(__file__).absolute().parent)
+    except ValueError:
+        print(json.dumps({'outcome': 'INSTALL_REFUSED_OR_RECOVERY_REQUIRED',
+                          'reason': 'bootstrap_bundle_bytecode_cache'}), file=sys.stderr)
+        raise SystemExit(65)
+    sys.dont_write_bytecode = True
 
 import core_release_guard as guard
 from control_overlay import render_controls
@@ -27,6 +64,26 @@ OLD_LAUNCHER = '26daa88555f928079ac59b5374bd1ba2c9fd144cb6d944ca8e0e56fc8f8a462c
 OLD_HANDOFF = 'a2199027b187e862b227f28629700c4997d1b75c4084f4e9c1e7993e7935ef38'
 OLD_MANIFEST = '6d9037ab9a74f2104f00671d132aeab06d4007a438a159a616a6a7c74fc51293'
 BOOTSTRAP = guard.STORE / 'bootstrap'
+
+
+class BootstrapRuntime(CoreRuntime):
+    """Only the first-install entrypoint may query before registry binding.
+
+    During initial preparation (or its exact retry), POLICY/CURRENT may have
+    been durably written while handoff still identifies the original controls.
+    Do not make missing/corrupt policy a normal-publisher fallback. Once handoff
+    registers any policy, all queries use the ordinary strict policy dispatcher.
+    """
+    def query(self, sql):
+        self.require_lease()
+        handoff = guard.read_file(LIVE_FILES['handoff'])
+        if 'R25_CORE_RELEASE_POLICY_SHA256' in env_values(handoff):
+            return super().query(sql)
+        must(hashlib.sha256(handoff).hexdigest() == OLD_HANDOFF,
+             'bootstrap_query_original_handoff_required')
+        for name in ('release-jar', 'preview-jar'):
+            self.identity(LIVE_FILES[name], expected_sha256=guard.BASELINE)
+        return self._legacy_query(sql)
 
 
 def immutable_bytes(rt, path, raw):
@@ -49,6 +106,10 @@ def immutable_copy(rt, source, target, digest, **source_policy):
 
 
 def old_engine(rt, source=None, partial=False):
+    # The exact legacy lifecycle loads this helper using Python's normal
+    # loader. Refuse its cache before loading either the live or saved engine,
+    # including recovery, rather than after module.production has executed it.
+    guard.reject_legacy_bytecode(guard.ROOT / 'operations/postgres_access.py')
     sys.path.insert(0, str(guard.ROOT / 'operations'))
     module = load_module(source or guard.ROOT / 'operations/lifecycle_adapter.py', 'bootstrap_lifecycle',
                          OLD_LIFECYCLE, owner=(0, 0) if source else (1000, 1000),
@@ -243,7 +304,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['install', 'recover-install'])
     args = parser.parse_args()
-    rt = CoreRuntime()
+    rt = BootstrapRuntime()
     rt.identity(LOCK)
     fd = os.open(LOCK, os.O_RDWR | os.O_NOFOLLOW)
     try:

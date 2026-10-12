@@ -160,6 +160,10 @@ isolated private-field mutation evidence is reused, not reproduced in production
 ## Release and rollback sequence
 
 1. Review Deploy/Core/Web PRs and required CI. Merging main does not deploy.
+   The 2026-10-12 bounded observation found the original lifecycle/launcher and
+   no Core publisher registry. This installation therefore needs the reviewed V1
+   first-install step before V2 upgrade. Use the [unexecuted release instructions](release-instructions.md);
+   do not invoke the V2 upgrader directly against absent POLICY/CURRENT.
 2. In a separately authorized preparation window, refresh actual controller,
    JAR/Web/configuration identities, locks/recovery state, service credentials,
    ownership, native PostgreSQL and source-module cache state. Bind final reviewed
