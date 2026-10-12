@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Launch the immutable R25 Java jar from strict private key/value files."""
+from __future__ import annotations
+
+import os
+import stat
+import sys
+import hashlib
+import importlib.util
+from pathlib import Path
+
+ALLOWED = {
+    "ARTLIVE_POSTGRES_JDBC_URL", "ARTLIVE_POSTGRES_USERNAME", "ARTLIVE_POSTGRES_PASSWORD",
+    "AURALINK_ENV_FILE", "AURALINK_JWT_SECRET", "AURALINK_JWT_EXPIRATION_MS", "ARTLIVE_UPLOAD_DIR", "ARTLIVE_AUDIO_DIR",
+    "ARTLIVE_LEGACY_AUDIO_DIR", "ARTLIVE_MANAGED_MEDIA_DIR", "ARTLIVE_PRIVATE_MEDIA_DIR",
+    "ARTLIVE_CATALOG_IMPORT_DISABLED_PATH", "ARTLIVE_CATALOG_LEGACY_PICTURE_DIR",
+    "AURALINK_GUIDE_INTERNAL_TOKEN", "AURALINK_CRITIC_INTERNAL_TOKEN", "ARTLIVE_BATCH_MEDIA_ROOT",
+    "ARTLIVE_GUIDE_KNOWLEDGE_ROOT", "ARTLIVE_GUIDE_POETRY_GRAPH_PATH", "ARTLIVE_GUIDE_POETRY_STATS_PATH",
+    "AURALINK_GUIDE_KNOWLEDGE_ROOT", "AURALINK_GUIDE_POETRY_GRAPH_PATH", "AURALINK_GUIDE_POETRY_STATS_PATH", "AURALINK_CRITIC_MODEL_IDENTITY",
+    "ARTLIVE_UNIFIED_IMPORT_SOURCE_ID", "ARTLIVE_PROVIDER_STAGING_DIR", "AURALINK_CATALOG_CRITIC_PRIVATE_MEDIA_UPLOAD_ENABLED",
+}
+
+def fail(reason: str) -> None: raise SystemExit("R25_PRODUCTION_JAVA=FAIL reason=" + reason)
+def private(path: Path) -> None:
+    value = path.lstat()
+    if path.is_symlink() or not path.is_file() or value.st_uid != 0 or stat.S_IMODE(value.st_mode) != 0o600: fail("private_input")
+def parse(path: Path, required: set[str] | None = None) -> dict[str, str]:
+    private(path); values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"): continue
+        if "=" not in line: fail("env_syntax")
+        key, value = line.split("=", 1)
+        if key not in ALLOWED or key in values or "\x00" in value: fail("env_key")
+        values[key] = value
+    if required and not required.issubset(values): fail("env_required")
+    return values
+
+PREVIEW_BASE = Path("/root/autodl-tmp/artlive/backend-preview")
+
+def root_owned_directory(path: Path, mode: int) -> None:
+    item = path.lstat()
+    if path.is_symlink() or not path.is_dir() or item.st_uid != 0 or stat.S_IMODE(item.st_mode) != mode:
+        fail("java_preview_directory")
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def guard_backend_start(root: Path, backend_hash: str) -> None:
+    # This independently callable official launcher must not bypass the same
+    # post-import downgrade barrier used by start/recover/watchdog. It never
+    # installs a JAR or rewrites any service record. A parent-owned lease is
+    # inherited only for this guard and closed before exec(Java); the parent's
+    # descriptor keeps protection through its normal readiness wait.
+    fixed=Path('/root/autodl-tmp/artlive-r25-native-pg16/handoff-production-20260923T062101Z')
+    if root!=fixed:fail('recovery_guard_fixed_root')
+    handoff=root/'runtime/handoff-control.env';private(handoff)
+    entries={}
+    for line in handoff.read_text().splitlines():
+        if not line or line.startswith('#'):continue
+        if '=' not in line:fail('recovery_guard_configuration')
+        key,value=line.split('=',1)
+        if key in entries:fail('recovery_guard_configuration')
+        entries[key]=value
+    helper=root/'operations/huaniao_recovery_guard.py'
+    expected=entries.get('R25_HUANIAO_RECOVERY_GUARD_SHA256','')
+    if (entries.get('R25_HUANIAO_RECOVERY_GUARD')!=str(helper) or
+        entries.get('R25_BACKEND_SHA256')!=backend_hash or
+        len(expected)!=64 or any(c not in '0123456789abcdef' for c in expected)):
+        fail('recovery_guard_binding')
+    for component in [helper,*helper.parents]:
+        if component.is_symlink():fail('recovery_guard_symlink')
+    item=helper.lstat()
+    if (not stat.S_ISREG(item.st_mode) or (item.st_uid,item.st_gid,stat.S_IMODE(item.st_mode))!=(1000,1000,0o700)
+        or sha256(helper)!=expected):fail('recovery_guard_identity')
+    specification=importlib.util.spec_from_file_location('java_huaniao_recovery_guard',helper)
+    module=importlib.util.module_from_spec(specification);specification.loader.exec_module(module)
+    lease=os.environ.get('R25_DEPLOYMENT_LEASE_FD')
+    if lease is not None and (not lease.isdecimal() or int(lease)<3 or int(lease)>65535):
+        fail('recovery_guard_lease_descriptor')
+    descriptor=int(lease) if lease is not None else None
+    try:
+        recovery=module.production()
+        if descriptor is None:descriptor=os.open(recovery.lock,os.O_RDWR|os.O_NOFOLLOW)
+        recovery.require_backend_eligible(backend_hash,descriptor)
+    except module.Refused as error:fail(str(error))
+    finally:
+        if descriptor is not None:os.close(descriptor)
+
+if len(sys.argv) != 8 or sys.argv[1] not in {"readonly", "normal"}:
+    raise SystemExit("usage: r25-production-java-launch.py {readonly|normal} BASE_ENV SOURCE_ENV CONFIG_FILE RELEASE_ROOT PREVIEW_ROOT PORT")
+mode, base, source, config, release_root, preview_root, port = sys.argv[1:]
+base_path, source_path, config_path, release, preview = Path(base), Path(source), Path(config), Path(release_root), Path(preview_root)
+private(config_path)
+values = parse(base_path, {"ARTLIVE_POSTGRES_JDBC_URL", "ARTLIVE_POSTGRES_USERNAME", "ARTLIVE_POSTGRES_PASSWORD", "AURALINK_ENV_FILE"})
+source_values = parse(source_path, {"ARTLIVE_UNIFIED_IMPORT_SOURCE_ID", "ARTLIVE_BATCH_MEDIA_ROOT", "ARTLIVE_GUIDE_KNOWLEDGE_ROOT"})
+if set(values).intersection(source_values): fail("duplicate_env_key")
+values.update(source_values)
+if release.is_symlink() or not (release / "artifacts" / "backend.jar").is_file() or not port.isdecimal(): fail("release_or_port")
+if not release.is_absolute() or release.name != "release" or not release.parent.name.startswith("handoff-production-"):
+    fail("release_or_port")
+root_owned_directory(PREVIEW_BASE, 0o700)
+expected_preview = PREVIEW_BASE / ("r25-isolated-preview-" + hashlib.sha256(str(release.parent).encode("utf-8")).hexdigest()[:16])
+if preview != expected_preview or preview.parent != PREVIEW_BASE or preview.name != expected_preview.name:
+    fail("java_preview_identity")
+root_owned_directory(preview, 0o700)
+work = preview / "work"
+root_owned_directory(work, 0o700)
+root_owned_directory(preview / "release", 0o700)
+preview_jar = preview / "release" / "backend.jar"
+item = preview_jar.lstat()
+if preview_jar.is_symlink() or not preview_jar.is_file() or item.st_uid != 0 or stat.S_IMODE(item.st_mode) != 0o600 or sha256(preview_jar) != sha256(release / "artifacts" / "backend.jar"):
+    fail("java_preview_release")
+java_home = release.parent / "runtime" / "java-home"
+root_owned_directory(java_home, 0o700)
+profile = "catalog-postgres-production,catalog-postgres-cutover-readonly" if mode == "readonly" else "catalog-postgres-production"
+environment = {"PATH": "/usr/bin:/bin", "HOME": str(java_home), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", **values}
+args = ["/usr/lib/jvm/java-17-openjdk-amd64/bin/java", "-Duser.dir=" + str(work), "-Duser.home=" + str(java_home), "-jar", str(preview_jar), "--server.address=127.0.0.1", "--server.port=" + port, "--spring.config.additional-location=file:" + str(config_path), "--spring.profiles.active=" + profile, "--auralink.round51.isolated-preview.enabled=true", "--auralink.round51.isolated-preview.root=" + str(preview), "--auralink.round51.isolated-preview.working-directory=" + str(work)]
+guard_backend_start(release.parent,sha256(preview_jar))
+os.execve(args[0], args, environment)

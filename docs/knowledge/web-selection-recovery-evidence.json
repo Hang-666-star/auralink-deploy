@@ -1,0 +1,42 @@
+{
+  "production_access": false,
+  "actual_components": [
+    "rendered Commit",
+    "installed selector",
+    "installed c5ea supervisor",
+    "installed stop diagnostics",
+    "Node22.23.2",
+    "selected production-API Web app UFp1G1lBAeDa80YUnnakx"
+  ],
+  "stubs": [],
+  "cases": [
+    {
+      "phase": "BASELINE_CAPTURED",
+      "result": "BASELINE_RETAINED",
+      "repeat": "verified_noop",
+      "same_live_pair": true,
+      "same_supervisor_and_node_identity": true
+    },
+    {
+      "phase": "DEPLOY_INTENT",
+      "result": "BASELINE_RETAINED",
+      "repeat": "verified_noop",
+      "same_live_pair": true,
+      "same_supervisor_and_node_identity": true
+    },
+    {
+      "phase": "DEPLOY_FAILED_OR_UNCERTAIN",
+      "result": "BASELINE_RETAINED",
+      "repeat": "verified_noop",
+      "same_live_pair": true,
+      "same_supervisor_and_node_identity": true
+    },
+    {
+      "phase": "DEPLOY_INTENT",
+      "result": "REFUSED_NO_OWNED_RUNTIME",
+      "journal_unchanged": true,
+      "reason": "owned_supervisor_status_75"
+    }
+  ],
+  "scope": "Real namespace processes and preserved PID/start-ticks; no inner deploy replay, no production recovery acceptance; dead/unknown runtime remains fail-closed"
+}
