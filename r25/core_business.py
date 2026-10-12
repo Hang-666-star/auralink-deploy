@@ -332,11 +332,39 @@ def verify_assets(policy):
             'filesystem': filesystem, 'candidate_process_capability_proof_required': root_isolation}
 
 
+def acceptance_queries(policy):
+    """Read the two approved SQL literals without importing a sibling module.
+
+    The official Java launcher loads this guard by its bound file path; the
+    publisher directory is deliberately absent from its Python import path.
+    Parsing the verified source also avoids executing an ambient cached module.
+    """
+    import ast
+    raw = read_bound(Path(__file__).with_name('core_acceptance.py'),
+                     expected=policy['runtime_modules']['core_acceptance.py'],
+                     expected_owner=policy['installation']['private_owner'], mode=0o600)
+    try:
+        tree = ast.parse(raw.decode('utf-8'))
+    except (UnicodeError, SyntaxError) as error:
+        raise Refused('business_acceptance_sql_source') from error
+    expected = {'IDLE_SQL', 'PRIVATE_SAMPLE_SQL'}
+    values = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = {target.id for target in node.targets if isinstance(target, ast.Name)} & expected
+            for name in names:
+                must(name not in values and len(node.targets) == 1 and
+                     isinstance(node.value, ast.Constant) and type(node.value.value) is str,
+                     'business_acceptance_sql_literal')
+                values[name] = node.value.value
+    must(set(values) == expected, 'business_acceptance_sql_literals_missing')
+    return frozenset(values.values())
+
+
 def readonly_query(policy, sql, lease_fd):
     validate_policy(policy)
     pg = policy['installation']['postgres']
-    from core_acceptance import IDLE_SQL, PRIVATE_SAMPLE_SQL
-    must(type(sql) is str and sql in {RETENTION_SQL, IDLE_SQL, PRIVATE_SAMPLE_SQL}, 'business_readonly_sql_contract')
+    must(type(sql) is str and sql in {RETENTION_SQL, *acceptance_queries(policy)}, 'business_readonly_sql_contract')
     must(type(lease_fd) is int and lease_fd >= 0, 'business_lease_required')
     # Credential owner comes from the approved native installation and actual
     # account database, never from the credential file's current stat alone.
