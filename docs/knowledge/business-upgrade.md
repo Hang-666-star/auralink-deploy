@@ -1,5 +1,10 @@
 # Explicit Knowledge Core upgrade — review candidate, not production authorization
 
+The explicitly selected [sealed descriptor transport](sealed-assets.md) is a
+reviewed-code alternative for poetry-only root installations without mount
+privileges. It requires the matching Core adapter and new candidate approval;
+it does not relax the tmpfs contract below or run as a fallback.
+
 This change adds a candidate-specific V2 path to the existing R25 publisher.
 It does not turn equivalent repackaging into permission to change executable
 payloads. V1 still compares every effective class, resource, library and launcher
