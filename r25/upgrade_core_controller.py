@@ -21,6 +21,9 @@ import sys
 
 SCHEMA = 'R25_CORE_CONTROLLER_UPGRADE_APPROVAL_V1'
 JOURNAL_SCHEMA = 'R25_CORE_CONTROLLER_UPGRADE_TRANSACTION_V1'
+# Each approved plan retains the exact repository from its formal manifest.
+# Historical bundles remain recoverable after this explicit repository transfer.
+DEPLOY_REPOSITORIES = ('bailangguihun/auralink-deploy', 'Hang-666-star/auralink-deploy')
 # A controller candidate never chooses additional destinations. AI controllers,
 # credentials and database/media files are not here. Lifecycle/launcher changes
 # are derived below from the exact V1 byte overlay, never arbitrary new source.
@@ -164,7 +167,7 @@ def validate_plan(plan):
     identity = plan['deploy']
     must(type(identity) is dict and set(identity) == {
         'repository', 'ref', 'commit_sha', 'run_id', 'run_attempt'} and
-        identity['repository'] == 'Hang-666-star/auralink-deploy' and
+        identity['repository'] in DEPLOY_REPOSITORIES and
         identity['ref'] == 'refs/heads/release', 'upgrade_deploy_identity')
     guard.digest_value(identity['commit_sha'], 40)
     for name in ('run_id', 'run_attempt'):

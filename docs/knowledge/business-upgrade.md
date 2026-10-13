@@ -89,6 +89,25 @@ These checks do not pretend to fingerprint every user/task table. The publisher'
 fixed write set excludes databases, credentials, user assets, tasks and media;
 existing application integration evidence remains part of the required review.
 
+The complete private retention JSON has two independent bounds: at most 64 MiB
+of encoded bytes and 1–100,000 distinct media entries. Both must pass; long paths
+or verbose encoding can reach the byte limit before the entry limit. Every
+listed media file is still checked. Do not truncate an inventory or omit media
+to fit a metadata limit. Only this manifest reader uses the larger byte bound;
+policy, approval, journal and ordinary private-record limits remain 1 MiB.
+
+Deliver a reviewed inventory larger than 1 MiB as a private regular file and use
+the existing `R25Storage.atomic_copy_file` with its exact approved SHA-256 and
+`expected_bytes`, rather than `atomic_write_bytes`/`atomic_write_json`. The
+observed full 9,084-file inventory is 3,002,347 bytes; its approved bytes must not
+be reformatted or reduced during delivery. The source and destination stay under
+the already reviewed fixed private roots, with the publication lease held,
+root/private-owner 0600, no links and durable no-clobber publication. Verify the
+retention-specific size bound before copying. Existing targets must match the
+approved identity; do not overwrite foreign contents. This changes neither the
+installation allowlist nor approval requirements. A missing or oversized
+manifest refuses V2 preflight before the controller journal or service changes.
+
 The shared R25/c5ea lock and Core/AI recovery interlocks remain. An unfinished
 controller upgrade also blocks normal Core publication. c5ea remains the only
 Next lifecycle owner. The reviewed business overlay changes only the Java

@@ -9,7 +9,11 @@ import re
 import stat
 import zipfile
 
-REPOSITORY = 'Hang-666-star/auralink-deploy'
+REPOSITORY = 'bailangguihun/auralink-deploy'
+HISTORICAL_REPOSITORY = 'Hang-666-star/auralink-deploy'
+# Preserve the recorded origin of already built artifacts; never normalize it
+# to the current owner or accept an arbitrary fork with the same project name.
+VERIFIABLE_REPOSITORIES = (REPOSITORY, HISTORICAL_REPOSITORY)
 REF = 'refs/heads/release'
 FILES = tuple(sorted((
     'ai_publish.py', 'ai_release_candidate.py', 'ai_release_guard.py', 'ai_runtime.py',
@@ -31,7 +35,7 @@ def require(condition, reason):
 
 
 def identity(repository, ref, commit, run_id, run_attempt):
-    require(repository == REPOSITORY and ref == REF, 'release_repository_or_ref')
+    require(repository in VERIFIABLE_REPOSITORIES and ref == REF, 'release_repository_or_ref')
     require(isinstance(commit, str) and re.fullmatch('[0-9a-f]{40}', commit), 'commit')
     for value in (run_id, run_attempt):
         require(isinstance(value, str) and re.fullmatch('[1-9][0-9]{0,19}', value), 'run_identity')
@@ -70,6 +74,7 @@ def manifest_for(payload, archive, expected):
 
 
 def create(source, output, repository, ref, commit, run_id, run_attempt):
+    require(repository == REPOSITORY, 'new_release_repository')
     expected = identity(repository, ref, commit, run_id, run_attempt)
     payload = {name: read_regular(Path(source) / name, MAX_FILE_BYTES) for name in FILES}
     archive = archive_bytes(payload)
