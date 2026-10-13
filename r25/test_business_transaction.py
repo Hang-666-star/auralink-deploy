@@ -22,6 +22,7 @@ from test_core_business import fixture_policy, encoded
 
 class BusinessTransactionTests(unittest.TestCase):
     release_profile = 'map-enabled'
+    isolation = 'nonroot-posix'
 
     def setUp(self):
         self.h = runtime_fixture.RuntimeMethodTests('runTest')
@@ -29,7 +30,7 @@ class BusinessTransactionTests(unittest.TestCase):
         self.addCleanup(self.h.doCleanups)
         h = self.h
         self.rt = h.runtime
-        self.policy = fixture_policy(h.root, self.release_profile)
+        self.policy = fixture_policy(h.root, self.release_profile, self.isolation)
         up = self.policy['upgrade']
         up['baseline_release'] = asdict(h.old)
         up['candidate'].update(commit_sha=h.new.commit_sha, artifact_sha256=h.new.artifact_sha256,
@@ -41,7 +42,7 @@ class BusinessTransactionTests(unittest.TestCase):
         up['configuration']['before_sha256'] = self.policy['legacy_policy']['application_configuration_sha256'] = digest(before)
         after = before + b'\n# R25 reviewed Knowledge configuration\n' + b''.join(
             ('auralink.knowledge.'+k+': '+json.dumps(up['configuration']['knowledge'][k])+'\n').encode()
-            for k in business.config_keys(self.release_profile))
+            for k in business.config_keys(self.release_profile, self.isolation))
         up['configuration']['after_sha256'] = digest(after)
         media = h.root/'retained-media.bin'; media.write_bytes(b'retained synthetic media')
         self.media = media
@@ -168,6 +169,13 @@ class BusinessTransactionTests(unittest.TestCase):
 class PoetryOnlyBusinessTransactionTests(BusinessTransactionTests):
     """Same transaction/recovery assertions with exact two-file profile config."""
     release_profile = 'poetry-only'
+
+
+class SealedPoetryBusinessTransactionTests(BusinessTransactionTests):
+    # Same actual Publisher/CoreRuntime fixture transitions; OS/HTTP remain
+    # explicit stubs. Real descriptor/capdrop/Java evidence is separate.
+    release_profile = 'poetry-only'
+    isolation = 'sealed-memfd-capdrop'
 
 
 if __name__ == '__main__': unittest.main()

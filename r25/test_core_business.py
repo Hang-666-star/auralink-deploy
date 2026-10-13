@@ -17,7 +17,7 @@ def encoded(value):
     return (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
 
 
-def fixture_policy(root, profile='map-enabled'):
+def fixture_policy(root, profile='map-enabled', isolation='nonroot-posix'):
     """Reusable explicit test approval; never usable as a production approval."""
     root = Path(root)
     account = pwd.getpwuid(os.getuid())
@@ -28,12 +28,14 @@ def fixture_policy(root, profile='map-enabled'):
     if profile == 'map-enabled':
         knowledge['china-sha256'] = '3'*64
         evidence['map_permission_sha256'] = '5'*64
+    if isolation == 'sealed-memfd-capdrop':
+        knowledge['snapshot-transport'] = 'sealed-memfd-v1'
     after = before + b'\n# R25 reviewed Knowledge configuration\n' + b''.join(
-        ('auralink.knowledge.' + key + ': ' + json.dumps(knowledge[key]) + '\n').encode() for key in business.config_keys(profile))
+        ('auralink.knowledge.' + key + ': ' + json.dumps(knowledge[key]) + '\n').encode() for key in business.config_keys(profile, isolation))
     legacy = {'schema': 'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1', 'repository': business.REPOSITORY,
               'baseline_sha256': 'a'*64, 'baseline_commit': 'a'*40, 'payload_fingerprint': 'b'*64,
               'application_configuration_sha256': business.sha(before)}
-    return {'schema': business.SCHEMA, 'repository': business.REPOSITORY,
+    policy = {'schema': business.SCHEMA, 'repository': business.REPOSITORY,
         'legacy_policy': legacy, 'legacy_policy_sha256': business.sha(encoded(legacy)),
         'controllers': {name:'a'*64 for name in ('lifecycle_adapter.py', 'r25-production-java-launch.py', 'core_release_guard.py')},
         'runtime_modules': {name:'a'*64 for name in business.RUNTIME_MODULES},
@@ -56,6 +58,12 @@ def fixture_policy(root, profile='map-enabled'):
                        'owner_uid':os.getuid(), 'owner_gid':os.getgid()},
             'compatibility': {'retention_manifest_path':str(root/'retention.json'), 'retention_manifest_sha256':'2'*64},
             'evidence': evidence}}
+    if isolation == 'sealed-memfd-capdrop':
+        policy['installation']['service'] = {'account':'root','uid':0,'gid':0,'groups':[0], 'isolation':isolation}
+        custodian = pwd.getpwnam('nobody')
+        policy['upgrade']['assets']['sealed_owner'] = {'account':custodian.pw_name,'uid':custodian.pw_uid,'gid':0}
+    return policy
+
 
 
 class BusinessContractTests(unittest.TestCase):
