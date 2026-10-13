@@ -52,6 +52,34 @@ class ReleaseBundleTests(unittest.TestCase):
             with self.subTest(position=position), self.assertRaises(ValueError):
                 self.verify(tuple(values))
 
+    def test_transferred_repository_is_not_an_alias_for_historical_artifacts(self):
+        self.build()
+        self.assertEqual(self.verify()['repository'], 'bailangguihun/auralink-deploy')
+        historical = (bundle.HISTORICAL_REPOSITORY, *IDENTITY[1:])
+        with self.assertRaisesRegex(ValueError, 'manifest_or_expected_identity_mismatch'):
+            self.verify(historical)
+        # Synthetic old manifest: the payload is identical, but its recorded
+        # repository remains part of the independent expected build identity.
+        path = self.output / bundle.MANIFEST_NAME
+        document = json.loads(path.read_text())
+        document['repository'] = bundle.HISTORICAL_REPOSITORY
+        path.write_text(json.dumps(document))
+        self.assertEqual(self.verify(historical)['repository'], bundle.HISTORICAL_REPOSITORY)
+        with self.assertRaisesRegex(ValueError, 'manifest_or_expected_identity_mismatch'):
+            self.verify()
+        for position, wrong in ((1, 'refs/heads/main'), (2, 'b' * 40), (3, '43'), (4, '2')):
+            values = list(historical)
+            values[position] = wrong
+            with self.subTest(position=position), self.assertRaises(ValueError):
+                self.verify(tuple(values))
+
+    def test_new_builds_refuse_historical_or_foreign_repository_before_output(self):
+        for repository in (bundle.HISTORICAL_REPOSITORY, 'fork/auralink-deploy',
+                           'bailangguihun/another-repository', 'Bailangguihun/auralink-deploy'):
+            with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, 'new_release_repository'):
+                bundle.create(ROOT / 'r25', self.output, repository, *IDENTITY[1:])
+            self.assertFalse(self.output.exists())
+
     def test_changed_archive_and_manifest_rejected(self):
         self.build()
         path = self.output / bundle.ARCHIVE_NAME

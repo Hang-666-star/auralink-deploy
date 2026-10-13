@@ -87,7 +87,7 @@ class Runtime(upgrade.ControlUpgradeRuntime):
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux descriptor/fsync/flock tests')
 class ControllerUpgradeTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, deploy_repository='Hang-666-star/auralink-deploy'):
         tmp = tempfile.TemporaryDirectory(prefix='core-controller-upgrade-')
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -196,7 +196,7 @@ class ControllerUpgradeTests(unittest.TestCase):
             'R25_CORE_RELEASE_GUARD_SHA256': files['core_release_guard.py']['after_sha256'],
             'R25_LIFECYCLE_ADAPTER_SHA256': v2.lifecycle_sha256})
         plan = {
-            'schema': upgrade.SCHEMA, 'deploy': {'repository': 'Hang-666-star/auralink-deploy',
+            'schema': upgrade.SCHEMA, 'deploy': {'repository': deploy_repository,
                 'ref': 'refs/heads/release', 'commit_sha': 'd' * 40, 'run_id': '456', 'run_attempt': '1'},
             'evidence_id': 'synthetic_fixture_not_authorization', 'current_release': asdict(release),
             'preserved': {name: sha(path.read_bytes()) for name, path in live.items() if name != 'handoff'},
@@ -250,6 +250,36 @@ class ControllerUpgradeTests(unittest.TestCase):
         self.assertEqual(runtime.events.count('watchdog-stop'), 1)
         with self.assertRaisesRegex(Refused, 'not_recoverable'):
             self.run_recover(runtime, plan_sha)
+
+    def test_transferred_deploy_upgrade_recovery_and_exact_approval_binding(self):
+        runtime, plan, plan_sha, root = self.fixture('bailangguihun/auralink-deploy')
+        self.assertEqual(upgrade.validate_plan(plan)['deploy']['repository'], 'bailangguihun/auralink-deploy')
+        # Renaming the repository alone must invalidate the approved bytes,
+        # even though both explicit repository identities are supported.
+        changed = dict(plan, deploy=dict(plan['deploy'], repository='Hang-666-star/auralink-deploy'))
+        runtime.write(upgrade.approval_path(), changed)
+        with self.assertRaises(StorageRefused):
+            self.run_upgrade(runtime, plan_sha)
+        runtime.write(upgrade.approval_path(), plan)
+        runtime.fail_verified = True
+        with self.assertRaisesRegex(Refused, 'fixture_http_acceptance_failure'):
+            self.run_upgrade(runtime, plan_sha)
+        self.assertEqual(self.run_recover(runtime, plan_sha)['outcome'], 'CONTROLLER_UPGRADE_RESTORED')
+        self.assertEqual(self.run_upgrade(runtime, plan_sha)['outcome'], 'CONTROLLER_UPGRADED')
+        self.assertEqual(self.run_upgrade(runtime, plan_sha)['outcome'], 'CONTROLLER_UPGRADE_ALREADY_INSTALLED')
+        self.assertEqual((root / 'database.fixture').read_bytes(), b'existing huaniao retained fixture')
+        self.assertEqual((root / 'media.bin').read_bytes(), b'existing retained media bytes')
+
+    def test_controller_plan_rejects_foreign_repository_or_nonrelease_identity(self):
+        _, plan, _, _ = self.fixture('bailangguihun/auralink-deploy')
+        for field, wrong in (('repository', 'fork/auralink-deploy'),
+                             ('repository', 'bailangguihun/auralink-core-api'),
+                             ('repository', 'Bailangguihun/auralink-deploy'),
+                             ('ref', 'refs/heads/main'), ('run_id', '0'), ('run_attempt', '0'),
+                             ('commit_sha', 'not-a-commit')):
+            changed = dict(plan, deploy=dict(plan['deploy'], **{field: wrong}))
+            with self.subTest(field=field, wrong=wrong), self.assertRaises((Refused, upgrade.guard.Refused)):
+                upgrade.validate_plan(changed)
 
     def test_live_copy_failure_before_and_after_every_target_requires_explicit_recovery(self):
         for index in range(len(upgrade.PUBLISHER_FILES) + 5):
