@@ -13,12 +13,15 @@ from pathlib import Path
 import pwd
 import re
 import stat
+import struct
 import subprocess
 import types
 
 SCHEMA = 'R25_CORE_BUSINESS_POLICY_V2'
 RECORD_SCHEMA = 'R25_CORE_BUSINESS_RELEASE_V2'
 REPOSITORY = 'Hang-666-star/auralink-core-api'
+CURRENT_REPOSITORY = 'bailangguihun/auralink-core-api'
+VERIFIED_REPOSITORIES = (CURRENT_REPOSITORY, REPOSITORY)
 CONFIG_KEYS = ('snapshot-root', 'graph-sha256', 'stats-sha256', 'map-enabled', 'china-sha256')
 ASSETS = {'poetry-graph.json': 'graph-sha256', 'poetry-stats.json': 'stats-sha256',
           'china.json': 'china-sha256'}
@@ -149,7 +152,8 @@ def read_bound(path, *, expected=None, expected_owner=None, mode=None, limit=102
 
 
 def validate_policy(policy):
-    must(type(policy) is dict and policy.get('schema') == SCHEMA and policy.get('repository') == REPOSITORY,
+    must(type(policy) is dict and policy.get('schema') == SCHEMA and
+         policy.get('repository') in VERIFIED_REPOSITORIES,
          'business_policy_identity')
     legacy = policy.get('legacy_policy')
     must(type(legacy) is dict and legacy.get('schema') == 'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1' and
@@ -173,7 +177,8 @@ def validate_policy(policy):
     map_enabled = up['release_profile'] == 'map-enabled'
     identity = up.get('candidate')
     must(type(identity) is dict and set(identity) == {'repository', 'commit_sha', 'github_run_id', 'github_run_attempt',
-         'artifact_sha256', 'artifact_bytes', 'payload_fingerprint'} and identity['repository'] == REPOSITORY,
+         'artifact_sha256', 'artifact_bytes', 'payload_fingerprint'} and
+         identity['repository'] == policy['repository'],
          'business_candidate_identity')
     digest(identity['commit_sha'], 40)
     for key in ('artifact_sha256', 'payload_fingerprint'):
@@ -253,6 +258,18 @@ def validate_policy(policy):
     owner([pg.get('credential_uid'), pg.get('credential_gid')])
     owner(pg.get('psql_owner'))
     must(pg.get('psql_mode') in {0o500,0o555,0o700,0o755}, 'business_psql_mode')
+    if 'ancestor_traversal_acl' in asset:
+        acl = asset['ancestor_traversal_acl']
+        must(service['isolation'] == 'sealed-memfd-capdrop' and service['uid'] == 0,
+             'business_traversal_acl_mode')
+        must(type(acl) is dict and set(acl) == {'path', 'sha256', 'credential_account', 'credential_uid'} and
+             acl.get('path') == '/root', 'business_traversal_acl_contract')
+        digest(acl['sha256'])
+        must(acl['credential_account'] == pg['credential_account'] and
+             type(acl['credential_uid']) is int and 0 < acl['credential_uid'] < 0xffffffff and
+             acl['credential_uid'] == pg['credential_uid'], 'business_traversal_acl_credential')
+        must(Path('/root') in absolute(config['knowledge']['snapshot-root']).parents,
+             'business_traversal_acl_ancestor')
     return policy
 
 
@@ -343,6 +360,49 @@ def asset_specs(policy):
     return specs
 
 
+def _verify_parent_acl(policy, parent, info):
+    """Permit only an explicitly bound PG execute-only /root traversal ACL.
+
+    The exception never applies to the asset directory/files or other parents.
+    It grants no source read/write permission and does not change sealed-object
+    protection. Opening the actual ancestor pins metadata and ACL to one inode.
+    """
+    acl = policy['upgrade']['assets'].get('ancestor_traversal_acl')
+    if acl is None or parent != Path('/root'):
+        must(not any(x.startswith('system.posix_acl_') for x in os.listxattr(parent)),
+             'business_asset_acl_requires_review')
+        return
+    pg = policy['installation']['postgres']
+    try:
+        account = pwd.getpwnam(pg['credential_account'])
+    except KeyError as error:
+        raise Refused('business_traversal_acl_account_drift') from error
+    must((account.pw_uid, account.pw_gid) == (pg['credential_uid'], pg['credential_gid']),
+         'business_traversal_acl_account_drift')
+    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(fd)
+        must((before.st_dev, before.st_ino, before.st_ctime_ns) ==
+             (info.st_dev, info.st_ino, info.st_ctime_ns) and stat.S_ISDIR(before.st_mode) and
+             (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode)) == (0, 0, 0o710),
+             'business_traversal_acl_directory_identity')
+        must({x for x in os.listxattr(fd) if x.startswith('system.posix_acl_')} ==
+             {'system.posix_acl_access'}, 'business_traversal_acl_attributes')
+        raw = os.getxattr(fd, 'system.posix_acl_access')
+        must(sha(raw) == acl['sha256'], 'business_traversal_acl_digest')
+        # Linux POSIX ACL xattr v2: owner rwx, the bound PG credential uid --x,
+        # owning group ---, mask --x, other ---. No named groups/extra users.
+        entries = ((1, 7, 0xffffffff), (2, 1, pg['credential_uid']),
+                   (4, 0, 0xffffffff), (16, 1, 0xffffffff), (32, 0, 0xffffffff))
+        expected = struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *entry) for entry in entries)
+        must(raw == expected, 'business_traversal_acl_entries')
+        after = os.fstat(fd)
+        must((before.st_dev, before.st_ino, before.st_ctime_ns) ==
+             (after.st_dev, after.st_ino, after.st_ctime_ns), 'business_traversal_acl_changed')
+    finally:
+        os.close(fd)
+
+
 def _verified_assets(policy, *, include_bytes=False):
     up = validate_policy(policy)['upgrade']
     service = _service(policy)
@@ -364,7 +424,7 @@ def _verified_assets(policy, *, include_bytes=False):
              'business_asset_parent_permissions')
         if not protected_runtime:
             must(info.st_uid != service['uid'] and not _mode_access(info, service) & 2, 'business_asset_parent_permissions')
-        must(not any(x.startswith('system.posix_acl_') for x in os.listxattr(parent)), 'business_asset_acl_requires_review')
+        _verify_parent_acl(policy, parent, info)
     info = root.lstat()
     must((info.st_uid, info.st_gid) == (asset['owner_uid'], asset['owner_gid']) and
          stat.S_IMODE(info.st_mode) == 0o550 and set(x.name for x in root.iterdir()) == set(specs),

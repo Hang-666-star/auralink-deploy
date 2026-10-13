@@ -16,7 +16,9 @@ import sys
 import zipfile
 
 SCHEMA = "AURALINK_CORE_RELEASE_CANDIDATE_V1"
-REPOSITORY = "Hang-666-star/auralink-core-api"
+REPOSITORY = "bailangguihun/auralink-core-api"
+HISTORICAL_REPOSITORY = "Hang-666-star/auralink-core-api"
+REPOSITORIES = frozenset((REPOSITORY, HISTORICAL_REPOSITORY))
 JAR_NAME = "auralink-backend-0.0.1-SNAPSHOT.jar"
 REPORT_NAME = "r25-artifact-verification.json"
 SCOPE = "packaged resource and bytecode contracts; not an HTTP/PG acceptance claim"
@@ -98,6 +100,11 @@ def verified_inputs(jar, report):
 
 def create(jar, report, repository, ref, commit, run_id, attempt):
     must(repository == REPOSITORY, "repository_binding")
+    return bound_document(jar, report, repository, ref, commit, run_id, attempt)
+
+
+def bound_document(jar, report, repository, ref, commit, run_id, attempt):
+    must(type(repository) is str and repository in REPOSITORIES, "repository_binding")
     must(ref == "refs/heads/release", "release_ref_required")
     must(re.fullmatch(r"[0-9a-f]{40}", commit or "") is not None, "commit_identity")
     for value in (run_id, attempt):
@@ -110,16 +117,20 @@ def create(jar, report, repository, ref, commit, run_id, attempt):
             "verification": verification, "production_approved": False}
 
 
-def verify(manifest, jar, report, expected_commit, expected_run_id, expected_run_attempt):
+def verify(manifest, jar, report, expected_commit, expected_run_id, expected_run_attempt,
+           *, expected_repository=REPOSITORY):
     document = read_object(manifest)
     must(set(document) == KEYS and document.get("schema") == SCHEMA,
          "candidate_schema")
     must(document.get("production_approved") is False, "not_a_production_contract")
+    must(type(expected_repository) is str and expected_repository in REPOSITORIES
+         and document.get("repository") == expected_repository,
+         "expected_repository_mismatch")
     must((document.get("commit_sha"), document.get("github_run_id"), document.get("github_run_attempt")) ==
          (expected_commit, expected_run_id, expected_run_attempt), "expected_workflow_identity_mismatch")
-    expected = create(jar, report, document["repository"], document["ref"],
-                      document["commit_sha"], document["github_run_id"],
-                      document["github_run_attempt"])
+    expected = bound_document(jar, report, document["repository"], document["ref"],
+                              document["commit_sha"], document["github_run_id"],
+                              document["github_run_attempt"])
     must(document == expected, "candidate_content_mismatch")
     return document
 
@@ -133,6 +144,7 @@ def main():
     make.add_argument("--output", type=Path, required=True)
     check = modes.add_parser("verify")
     check.add_argument("--manifest", type=Path, required=True)
+    check.add_argument("--expected-repository", default=REPOSITORY)
     for name in ("expected-commit", "expected-run-id", "expected-run-attempt"):
         check.add_argument("--" + name, required=True)
     for command in (make, check):
@@ -154,7 +166,8 @@ def main():
                 os.fsync(stream.fileno())
         else:
             document = verify(args.manifest, args.jar, args.verification,
-                              args.expected_commit, args.expected_run_id, args.expected_run_attempt)
+                              args.expected_commit, args.expected_run_id, args.expected_run_attempt,
+                              expected_repository=args.expected_repository)
         print(json.dumps({"outcome": "CANDIDATE_VERIFIED", "production_approved": False,
                           "commit_sha": document["commit_sha"],
                           "artifact_sha256": document["artifact"]["sha256"]}, sort_keys=True))

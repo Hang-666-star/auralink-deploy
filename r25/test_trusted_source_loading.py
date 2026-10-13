@@ -244,7 +244,7 @@ class TrustedSourceTests(unittest.TestCase):
         helper = bundle / "core-release-candidate.py"
         jar_raw = b"synthetic staged jar fixture"
         artifact = digest(jar_raw)
-        new_raw = ("VALUE = 2\ndef verify(*args):\n    return {'artifact': {'sha256': '" + artifact +
+        new_raw = ("VALUE = 2\ndef verify(*args, **kwargs):\n    return {'repository': kwargs['expected_repository'], 'artifact': {'sha256': '" + artifact +
                    "' if VALUE == 2 else '" + "0" * 64 + "', 'bytes': " + str(len(jar_raw)) + "}}\n").encode()
         cached = self.cached_rewrite(helper, new_raw.replace(b"VALUE = 2", b"VALUE = 1"), new_raw)
         incoming, store = self.root / "incoming", self.root / "store"

@@ -34,6 +34,19 @@ independently computed complete payload fingerprint. The public candidate JSON
 cannot install or update approval. The existing trusted artifact verifier still
 runs before staging; no uploaded script is executed.
 
+After the repository transfer, a new Core build identifies
+`bailangguihun/auralink-core-api`. Historical manifests keep
+`Hang-666-star/auralink-core-api`; they are never relabelled. V2 requires the
+policy repository and its candidate repository to match exactly one of those
+two reviewed identities. The publisher supplies that installed candidate's
+repository independently to the verifier (`--expected-repository` in the
+standalone verification CLI) and preserves the verified manifest repository in
+the staged record. New manifest creation accepts only the current repository;
+historical verification requires the explicit historical expectation. Other
+repositories, forks and mismatches are rejected. V1 and the embedded rollback
+policy/record remain bound to the historical repository and unchanged payload
+equivalence rules. This does not grant approval to any new build or activate it.
+
 The private policy also binds all twelve Core publisher/validator/installer
 modules, the exact lifecycle/launcher/guard sources, the paired Web commit,
 review/evidence digests, the selected release profile and asset manifest, the application
@@ -147,6 +160,20 @@ verify all bytes and remount the whole filesystem read-only before restarting th
 business application. Missing/unmounted assets cause preflight/start refusal;
 application requests otherwise retain the safe 503/retry contract. This is an
 explicit operational prerequisite, not a production mount performed by this PR.
+
+The separate sealed mode supports one explicit, private
+`upgrade.assets.ancestor_traversal_acl` binding for the existing `/root` access
+ACL used by the installed PostgreSQL account. It requires an exact raw ACL hash,
+the same bound credential account/positive UID, root:root0710 and precisely the
+traverse-only named-user entries described in [the sealed contract](sealed-assets.md#existing-postgresql-traversal-acl).
+This does not permit arbitrary ACLs: asset roots/files, other ancestors, default
+ACLs and all other isolation modes retain their rejection behavior. The verifier
+does not change ACLs or permissions. Absent binding preserves the old refusal;
+absent or changed ACL under an explicit binding also refuses. A refused asset
+preflight before any controller journal is `NOT_STARTED`, not a recovery case.
+This addition requires new reviewed controller bytes and exact private record
+bindings, without repeating completed V1/four-file installation or rebuilding
+an unchanged Core JAR.
 
 ## Controller transaction and application transaction
 

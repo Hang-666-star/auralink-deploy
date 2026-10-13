@@ -73,12 +73,17 @@ def stage(rt, commit, run_id, attempt):
             rt.identity(path)
         verifier_path = Path(__file__).with_name('core-release-candidate.py')
         verifier = guard.source_module(verifier_path, 'trusted_core_candidate', guard.read_file(verifier_path))
-        candidate = verifier.verify(manifest, jar, report, commit, run_id, attempt)
-        digest = candidate['artifact']['sha256']
         policy = guard.policy()
-        fingerprint = guard.payload_fingerprint(jar)
         business = policy.get('schema') == guard.BUSINESS_POLICY_SCHEMA
-        business_identity = {'repository': guard.REPOSITORY, 'commit_sha': commit,
+        # The installed approval, never the incoming manifest, supplies the
+        # expected repository. V1 remains bound to its historical repository.
+        expected_repository = (policy['upgrade']['candidate']['repository'] if business
+                               else guard.REPOSITORY)
+        candidate = verifier.verify(manifest, jar, report, commit, run_id, attempt,
+                                    expected_repository=expected_repository)
+        digest = candidate['artifact']['sha256']
+        fingerprint = guard.payload_fingerprint(jar)
+        business_identity = {'repository': candidate['repository'], 'commit_sha': commit,
             'github_run_id': run_id, 'github_run_attempt': attempt, 'artifact_sha256': digest,
             'artifact_bytes': candidate['artifact']['bytes'], 'payload_fingerprint': fingerprint}
         if business:
@@ -95,7 +100,8 @@ def stage(rt, commit, run_id, attempt):
             rt.identity(target, expected_sha256=digest, expected_bytes=candidate['artifact']['bytes'])
         else:
             rt.storage.atomic_copy_file(jar, target, digest, expected_bytes=candidate['artifact']['bytes'])
-        document = {'schema': guard.BUSINESS_RECORD_SCHEMA if business else guard.RECORD_SCHEMA, 'repository': guard.REPOSITORY,
+        document = {'schema': guard.BUSINESS_RECORD_SCHEMA if business else guard.RECORD_SCHEMA,
+                    'repository': candidate['repository'],
                     'commit_sha': commit, 'github_run_id': run_id, 'github_run_attempt': attempt,
                     'artifact_sha256': digest, 'artifact_bytes': candidate['artifact']['bytes'],
                     'candidate_manifest_sha256': rt.identity(manifest)['sha256'],

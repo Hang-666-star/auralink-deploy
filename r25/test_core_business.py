@@ -155,6 +155,32 @@ assert sys.modules['core_acceptance'].__class__ is object
             with self.subTest(key=key), self.assertRaisesRegex(business.Refused, 'candidate_not_approved'):
                 business.candidate_matches(self.policy, changed)
 
+    def test_transferred_and_historical_candidates_keep_exact_policy_repository(self):
+        legacy = deepcopy(self.policy['legacy_policy'])
+        for repository in business.VERIFIED_REPOSITORIES:
+            with self.subTest(repository=repository):
+                value = deepcopy(self.policy)
+                value['repository'] = value['upgrade']['candidate']['repository'] = repository
+                business.validate_policy(value)
+                business.candidate_matches(value, value['upgrade']['candidate'])
+                self.assertEqual(value['legacy_policy'], legacy)
+                other = next(x for x in business.VERIFIED_REPOSITORIES if x != repository)
+                value['upgrade']['candidate']['repository'] = other
+                with self.assertRaisesRegex(business.Refused, 'business_candidate_identity'):
+                    business.validate_policy(value)
+
+    def test_foreign_repositories_and_relabelled_legacy_policy_are_rejected(self):
+        for repository in ('fork/auralink-core-api', 'Bailangguihun/auralink-core-api',
+                           business.CURRENT_REPOSITORY + '.git'):
+            value = deepcopy(self.policy)
+            value['repository'] = value['upgrade']['candidate']['repository'] = repository
+            with self.subTest(repository=repository), self.assertRaisesRegex(
+                    business.Refused, 'business_policy_identity'):
+                business.validate_policy(value)
+        self.policy['legacy_policy']['repository'] = business.CURRENT_REPOSITORY
+        with self.assertRaisesRegex(business.Refused, 'business_legacy_policy'):
+            business.validate_policy(self.policy)
+
     def test_missing_review_map_permission_and_self_declared_capability_refuse(self):
         for field, value in (('capability','any-business'), ('web_commit','main')):
             policy = deepcopy(self.policy); policy['upgrade'][field] = value
