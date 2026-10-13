@@ -30,6 +30,9 @@ TABLES = ('catalog_batches', 'catalog_batch_revisions', 'catalog_batch_current_r
           'catalog_paintings', 'catalog_media_assets', 'catalog_identity_reservations',
           'catalog_import_claims', 'catalog_import_attempts',
           'catalog_annotation_field_definitions', 'catalog_annotation_revisions')
+# Full media inventories are larger than policy/journal metadata. This bound is
+# specific to the retention manifest; the ordinary 1 MiB reader limit remains.
+RETENTION_MANIFEST_LIMIT = 64 * 1024 * 1024
 # Full retained rows, not Gallery heads: withdrawn/failed/missing-image rows and
 # reservations continue to constrain rollback. A changed data window refuses;
 # a later rollback needs a separately reviewed refreshed contract, never a DB restore.
@@ -480,7 +483,8 @@ def verify_compatibility(policy, query):
     up = validate_policy(policy)['upgrade']
     contract = up['compatibility']
     manifest = strict_json(read_bound(contract['retention_manifest_path'], expected=contract['retention_manifest_sha256'],
-                          expected_owner=policy['installation']['private_owner'], mode=0o600))
+                          expected_owner=policy['installation']['private_owner'], mode=0o600,
+                          limit=RETENTION_MANIFEST_LIMIT))
     must(type(manifest) is dict and set(manifest) == {'schema', 'database', 'port', 'major', 'versions', 'tables', 'media'} and
          manifest['schema'] == 'R25_CORE_RETAINED_DATA_V1', 'business_retention_manifest')
     pg = policy['installation']['postgres']
