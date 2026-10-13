@@ -34,6 +34,19 @@ independently computed complete payload fingerprint. The public candidate JSON
 cannot install or update approval. The existing trusted artifact verifier still
 runs before staging; no uploaded script is executed.
 
+After the repository transfer, a new Core build identifies
+`bailangguihun/auralink-core-api`. Historical manifests keep
+`Hang-666-star/auralink-core-api`; they are never relabelled. V2 requires the
+policy repository and its candidate repository to match exactly one of those
+two reviewed identities. The publisher supplies that installed candidate's
+repository independently to the verifier (`--expected-repository` in the
+standalone verification CLI) and preserves the verified manifest repository in
+the staged record. New manifest creation accepts only the current repository;
+historical verification requires the explicit historical expectation. Other
+repositories, forks and mismatches are rejected. V1 and the embedded rollback
+policy/record remain bound to the historical repository and unchanged payload
+equivalence rules. This does not grant approval to any new build or activate it.
+
 The private policy also binds all twelve Core publisher/validator/installer
 modules, the exact lifecycle/launcher/guard sources, the paired Web commit,
 review/evidence digests, the selected release profile and asset manifest, the application
