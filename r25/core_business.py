@@ -20,6 +20,8 @@ import types
 SCHEMA = 'R25_CORE_BUSINESS_POLICY_V2'
 RECORD_SCHEMA = 'R25_CORE_BUSINESS_RELEASE_V2'
 REPOSITORY = 'Hang-666-star/auralink-core-api'
+CURRENT_REPOSITORY = 'bailangguihun/auralink-core-api'
+VERIFIED_REPOSITORIES = (CURRENT_REPOSITORY, REPOSITORY)
 CONFIG_KEYS = ('snapshot-root', 'graph-sha256', 'stats-sha256', 'map-enabled', 'china-sha256')
 ASSETS = {'poetry-graph.json': 'graph-sha256', 'poetry-stats.json': 'stats-sha256',
           'china.json': 'china-sha256'}
@@ -150,7 +152,8 @@ def read_bound(path, *, expected=None, expected_owner=None, mode=None, limit=102
 
 
 def validate_policy(policy):
-    must(type(policy) is dict and policy.get('schema') == SCHEMA and policy.get('repository') == REPOSITORY,
+    must(type(policy) is dict and policy.get('schema') == SCHEMA and
+         policy.get('repository') in VERIFIED_REPOSITORIES,
          'business_policy_identity')
     legacy = policy.get('legacy_policy')
     must(type(legacy) is dict and legacy.get('schema') == 'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1' and
@@ -174,7 +177,8 @@ def validate_policy(policy):
     map_enabled = up['release_profile'] == 'map-enabled'
     identity = up.get('candidate')
     must(type(identity) is dict and set(identity) == {'repository', 'commit_sha', 'github_run_id', 'github_run_attempt',
-         'artifact_sha256', 'artifact_bytes', 'payload_fingerprint'} and identity['repository'] == REPOSITORY,
+         'artifact_sha256', 'artifact_bytes', 'payload_fingerprint'} and
+         identity['repository'] == policy['repository'],
          'business_candidate_identity')
     digest(identity['commit_sha'], 40)
     for key in ('artifact_sha256', 'payload_fingerprint'):

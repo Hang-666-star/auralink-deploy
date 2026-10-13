@@ -89,5 +89,27 @@ class BusinessPolicyTests(unittest.TestCase):
             self.assertEqual(guard.release_record(old['artifact_sha256'],self.baseline['accepted_record_sha256'],old['commit_sha']),old)
             with self.assertRaises(guard.Refused):guard.release_record(old['artifact_sha256'],None,old['commit_sha'])
 
+    def test_transferred_candidate_cannot_relabel_historical_rollback_record(self):
+        self.value['repository'] = self.value['upgrade']['candidate']['repository'] = business.CURRENT_REPOSITORY
+        policy_path = self.write('POLICY.json', self.value)
+        candidate = {**self.value['upgrade']['candidate'], 'schema': guard.BUSINESS_RECORD_SCHEMA,
+                     'policy_sha256': business.sha(policy_path.read_bytes())}
+        path = self.write('releases/' + candidate['artifact_sha256'] + '-' + candidate['commit_sha'] + '/record.json', candidate)
+        with patch.object(guard, 'policy', return_value=self.value):
+            self.assertEqual(guard.release_record(candidate['artifact_sha256'],
+                             business.sha(path.read_bytes()), candidate['commit_sha']), candidate)
+            candidate['repository'] = guard.REPOSITORY
+            path.write_bytes(encoded(candidate))
+            with self.assertRaisesRegex(business.Refused, 'candidate_not_approved'):
+                guard.release_record(candidate['artifact_sha256'], business.sha(path.read_bytes()), candidate['commit_sha'])
+            old = {'schema': guard.RECORD_SCHEMA, 'repository': business.CURRENT_REPOSITORY,
+                   'artifact_sha256': self.baseline['artifact_sha256'], 'commit_sha': self.baseline['commit_sha'],
+                   'artifact_bytes': 42, 'payload_fingerprint': self.value['legacy_policy']['payload_fingerprint'],
+                   'policy_sha256': self.value['legacy_policy_sha256']}
+            path = self.write('releases/' + old['artifact_sha256'] + '-' + old['commit_sha'] + '/record.json', old)
+            self.baseline['accepted_record_sha256'] = business.sha(path.read_bytes())
+            with self.assertRaisesRegex(guard.Refused, 'business_rollback_record'):
+                guard.release_record(old['artifact_sha256'], self.baseline['accepted_record_sha256'], old['commit_sha'])
+
 
 if __name__=='__main__':unittest.main()
