@@ -41,7 +41,9 @@ The exact five configuration properties are the existing four poetry-only keys
 plus `auralink.knowledge.snapshot-transport: sealed-memfd-v1`. `snapshot-root`
 is the approved durable source root. Only the two existing graph/stats files,
 manifest SHA, hashes, lengths, directory0550/file0440, declared ownership, no
-symlinks/hardlinks/ACLs and traversal checks pass. No china file, extra descriptor
+symlinks/hardlinks and traversal checks pass. Asset files and their source root
+must have no POSIX ACLs. Ancestors also reject ACLs unless the single, explicitly
+bound traversal exception below applies. No china file, extra descriptor
 configuration, map-enabled combination or unknown transport is allowed. Hashes
 and the full before/after configuration remain bound to the candidate.
 
@@ -67,6 +69,46 @@ checks F_GET_SEALS, distinct anonymous regular inodes, declared UID/GID/0440,
 lengths and complete hashes. It combines this with the existing process,
 configuration, UID/groups, start ticks, zero-capability and NoNewPrivs checks.
 A launcher message or JSON receipt cannot substitute the real kernel objects.
+
+## Existing PostgreSQL traversal ACL
+
+The production preflight encountered an existing access ACL on `/root` that
+grants the installed PostgreSQL credential account directory traversal only.
+The source pair and its other ancestors had no ACLs. Rejecting this ACL stopped
+the V2 attempt before a controller journal or active marker was created; this
+was not a partial application upgrade and does not call for transaction recovery.
+Do not remove the PostgreSQL ACL or weaken live directory permissions to make
+asset preflight pass.
+
+The optional private policy object `upgrade.assets.ancestor_traversal_acl` has
+exactly four fields: `path` must be `/root`; `sha256` pins the complete raw access
+ACL; `credential_account` and `credential_uid` must equal the already bound
+PostgreSQL credential account and its positive UID. The OS account must still
+resolve to its bound UID/GID. These are not values the verifier discovers and
+approves for itself. Review the actual private observation before supplying them.
+
+This binding is accepted only in `sealed-memfd-capdrop` mode for the existing root
+service. `/root` must be a strict ancestor of the asset source, never the asset
+directory or a file. The code fixes its owner/mode to root:root0710 and requires
+exact Linux POSIX ACL version2 entries: owner:rwx, named PostgreSQL user:--x,
+group:---, mask:--x and other:---. Default ACLs, additional named entries,
+read/write grants, unknown entries, digest drift, ownership or mode changes
+refuse. Every other ancestor and both source files retain their no-ACL checks.
+
+This is not a general ACL allow flag and does not change the tmpfs or non-root
+POSIX modes. Without the explicit binding, the previous blanket ancestor-ACL
+refusal remains. With it, a missing or changed bound ACL also refuses; there is
+no fallback to an unbound permission state. Verification runs at preflight and
+every relaunch before immutable descriptors are created. Runtime seals,
+custodian separation, zero capabilities and NoNewPrivs remain mandatory.
+
+This correction needs normal reviewed Deploy source promotion and its own
+formal artifact. New private POLICY/CONTROL records must bind those exact
+module bytes and the actually observed ACL; previously approved record digests
+do not cover this change. The Core implementation and poetry bytes are unchanged.
+No ACL creation, removal, service-account change or asset relocation is performed
+by the verifier. Preserve completed V1/four-file installations and use the normal
+V2 transaction only after its new bindings pass the original shared-lock gates.
 
 ## Exact protection and limits
 
