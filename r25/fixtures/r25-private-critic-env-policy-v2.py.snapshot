@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Run one R25 private Critic child with an explicit packaged execution policy.
+
+This helper is deliberately small and is used by the production activation
+runner only.  It never prints configuration values, never opens a socket, and
+never calls a model.  The caller supplies a per-session internal-token file;
+the token is read directly into the replacement child environment. Selecting
+this new hash-bound R25 launcher is the operator's persistent provider opt-in;
+the shared historical launcher and bare Python default remain unchanged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import stat
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+SAFE_PATH = "/root/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,}\Z")
+MODEL_RE = re.compile(r"[A-Za-z0-9._-]+\Z")
+
+
+class ConfigError(RuntimeError):
+    """A safe configuration boundary failure."""
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise ConfigError("env_file_not_regular")
+    if info.st_mode & 0o077:
+        raise ConfigError("env_file_permissions_too_open")
+    if info.st_size > 1024 * 1024:
+        raise ConfigError("env_file_too_large")
+    values: dict[str, str] = {}
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            raise ConfigError(f"env_file_malformed_line_{number}")
+        key, value = (part.strip() for part in line.split("=", 1))
+        if not KEY_RE.fullmatch(key) or key in values:
+            raise ConfigError(f"env_file_invalid_key_line_{number}")
+        if value[:1] in {"'", '"'} or value[-1:] in {"'", '"'}:
+            if len(value) < 2 or value[:1] != value[-1:]:
+                raise ConfigError(f"env_file_unmatched_quote_line_{number}")
+            value = value[1:-1]
+        if "\x00" in value or "\n" in value or "\r" in value:
+            raise ConfigError(f"env_file_unsafe_value_line_{number}")
+        values[key] = value
+    return values
+
+
+def read_private_token(path: Path) -> str:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise ConfigError("internal_token_not_regular")
+    if info.st_mode & 0o077:
+        raise ConfigError("internal_token_permissions_too_open")
+    token = path.read_text(encoding="ascii").strip()
+    if not TOKEN_RE.fullmatch(token):
+        raise ConfigError("internal_token_invalid")
+    return token
+
+
+def validate_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") != "/compatible-mode/v1"
+    ):
+        raise ConfigError("qwen_base_url_invalid")
+    return value.rstrip("/")
+
+
+def child_environment(values: dict[str, str], token: str, execution_policy: str) -> dict[str, str]:
+    if execution_policy not in {"isolated-stub-only", "configured-provider"}:
+        raise ConfigError("execution_policy_invalid")
+    for key in ("QWEN_API_KEY", "QWEN_BASE_URL", "QWEN_MODEL"):
+        if not values.get(key, "").strip():
+            raise ConfigError(f"missing_{key}")
+    for key in ("LLM_API_KEY", "DASHSCOPE_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
+        if values.get(key, "").strip():
+            raise ConfigError(f"direct_critic_configuration_conflict_{key}")
+    base_url = validate_base_url(values["QWEN_BASE_URL"].strip())
+    model = values["QWEN_MODEL"].strip()
+    if not MODEL_RE.fullmatch(model) or model.startswith("fixture-"):
+        raise ConfigError("qwen_model_invalid")
+    return {
+        "PATH": SAFE_PATH,
+        "LANG": "C.UTF-8",
+        "LLM_PROVIDER": "qwen",
+        "DASHSCOPE_API_KEY": values["QWEN_API_KEY"].strip(),
+        # Force the application loader to choose the intended bridge key.
+        "LLM_API_KEY": "",
+        "LLM_BASE_URL": base_url,
+        "LLM_MODEL": model,
+        "LLM_JSON_MODE": "true",
+        "LLM_TIMEOUT_SECONDS": "120",
+        "LLM_MAX_RETRIES": "0",
+        "MAX_CONCURRENCY": "4",
+        "MAX_UPSTREAM_CALLS": "18",
+        "DEFAULT_EVALUATION_PROFILE": "authoritative_four",
+        "AURALINK_CRITIC_INTERNAL_TOKEN": token,
+        "AURALINK_CRITIC_EXECUTION_POLICY": execution_policy,
+    }
+
+
+def safe_python_entrypoint(command: Path) -> bool:
+    """Allow the trusted venv ``bin/python`` link without accepting links generally."""
+    if not command.is_absolute() or not command.exists() or not command.is_file():
+        return False
+    try:
+        target = command.resolve(strict=True)
+    except OSError:
+        return False
+    if target.is_symlink() or not target.is_file() or not os.access(target, os.X_OK):
+        return False
+    bindir = command.parent
+    if bindir.name != "bin":
+        return False
+    if target.parent == bindir:
+        return True
+    marker = bindir.parent / "pyvenv.cfg"
+    return marker.is_file() and not marker.is_symlink()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env-file", type=Path, required=True)
+    parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--critic-source", type=Path, required=True)
+    parser.add_argument("--execution-policy", choices=("isolated-stub-only", "configured-provider"),
+                        required=True,
+                        help="Required explicit policy from the guarded persistent lifecycle contract")
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--exec", dest="run_child", action="store_true")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.check == args.run_child:
+        parser.error("choose exactly one of --check or --exec")
+    if args.run_child:
+        if not args.command or args.command[0] != "--" or len(args.command) < 2:
+            parser.error("--exec requires -- COMMAND")
+        args.command = args.command[1:]
+        command = Path(args.command[0])
+        if not safe_python_entrypoint(command):
+            parser.error("command must start with a validated Python entry point")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        source = args.critic_source.resolve(strict=True)
+        if source.is_symlink() or not (source / "app" / "config.py").is_file():
+            raise ConfigError("critic_source_invalid")
+        child = child_environment(parse_env_file(args.env_file), read_private_token(args.token_file),
+                                  args.execution_policy)
+        # Keep the session-owned CWD selected by the activation runner.  The
+        # Critic package is imported explicitly instead of chdir-ing into the
+        # immutable package tree, which would make the lifecycle owner reject
+        # the child and leave it unmanaged on a partial startup failure.
+        child["PYTHONPATH"] = str(source)
+        if args.check:
+            probe = (
+                "import os,sys; sys.path.insert(0, sys.argv[1]); from app.config import Settings; "
+                "s=Settings.from_env(); "
+                "raise SystemExit(0 if (s.llm_provider, s.llm_max_retries, s.execution_policy, "
+                "bool(s.llm_api_key), os.environ.get('MAX_UPSTREAM_CALLS')) == "
+                "('qwen', 0, sys.argv[2], True, '18') and "
+                "s.evaluation_available == (sys.argv[2] == 'configured-provider') else 69)"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", probe, str(source), args.execution_policy], cwd=source,
+                env=child, check=False,
+            )
+            if completed.returncode:
+                raise ConfigError(f"settings_loader_rejected_exit_{completed.returncode}")
+            print("R25_CRITIC_POLICY_ENV=PASS provider=qwen retries=0 structural_upstream_limit=18 "
+                  f"policy={args.execution_policy} credential=PRESENT_NOT_PRINTED")
+            return 0
+        os.execvpe(args.command[0], args.command, child)
+    except (ConfigError, OSError, UnicodeError) as exc:
+        print(f"ACTIVATION_CRITIC_ENV=FAIL reason={exc}", file=sys.stderr)
+        return 69
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

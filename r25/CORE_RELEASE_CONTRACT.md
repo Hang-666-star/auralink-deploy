@@ -53,3 +53,7 @@ Core release push先构建和上传候选。production job使用既有SERVER_HOS
 运行：python -B -m unittest discover -s r25 -p 'test_*.py' -v
 
 Windows跳过Linux owner/fd/fsync fixtures；其余测试覆盖真实overlay源保真、JAR能力变化拒绝、HTTP/隐藏字段、实际adapter固定文件/CAS、安装准备/切换多边界故障与安全重试。模拟进程/PG不是现场验收，候选测试不是生产部署成功。本轮交付可审查实施与CI证据；安装、真实版本切换和回退仍待执行。
+
+## Assistant S4 显式后继合同
+
+`upgrade.capability=assistant-v1` 通过 [Assistant 契约](../docs/assistant-release.md) 对精确 V001–V016、已验收 Knowledge V2 回退记录、候选制品、私有配置、配额政策及现有安装身份另行绑定。原 V1 等价和 Knowledge V2 的固定 13 版本限制保持。迁移前须在原 publisher STOPPED 阶段真实备份；SQL intent/reconcile 与恢复保留前向 schema。新增 CLI 是已安装 V2 的控制器后继升级，不是 V1 重新安装，也不是另一应用发布器。S4 未提交候选不具有生产批准。

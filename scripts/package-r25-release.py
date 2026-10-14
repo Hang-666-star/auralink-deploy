@@ -16,6 +16,7 @@ HISTORICAL_REPOSITORY = 'Hang-666-star/auralink-deploy'
 VERIFIABLE_REPOSITORIES = (REPOSITORY, HISTORICAL_REPOSITORY)
 REF = 'refs/heads/release'
 FILES = tuple(sorted((
+    'assistant_release.py','assistant_runtime.py','assistant_runtime_overlay.py','assistant_acceptance.py','assistant_backup.py','upgrade_assistant_controller.py',
     'ai_publish.py', 'ai_release_candidate.py', 'ai_release_guard.py', 'ai_runtime.py',
     'ai-baseline.json', 'control_overlay.py', 'core_acceptance.py', 'core_publish.py',
     'core_release_guard.py', 'core_runtime.py', 'core-release-candidate.py',

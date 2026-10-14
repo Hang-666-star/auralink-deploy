@@ -35,8 +35,8 @@ class ReleaseBundleTests(unittest.TestCase):
             self.assertEqual((self.output / name).read_bytes(), (other / name).read_bytes())
         self.assertEqual(report['status'], 'NOT_DEPLOYED')
         self.assertIs(report['installation_performed'], False)
-        self.assertEqual(len(report['files']), 19)
-        self.assertEqual(sum(name.endswith('.py') for name in bundle.FILES), 18)
+        self.assertEqual(len(report['files']), 25)
+        self.assertEqual(sum(name.endswith('.py') for name in bundle.FILES), 24)
         with zipfile.ZipFile(self.output / bundle.ARCHIVE_NAME) as archive:
             self.assertEqual(archive.namelist(), list(bundle.FILES))
             for name in bundle.FILES:
