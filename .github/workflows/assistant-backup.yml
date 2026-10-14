@@ -1,0 +1,56 @@
+name: Scheduled Assistant backup
+
+on:
+  schedule:
+    - cron: '15 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r25-assistant-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Back up installed Assistant through R25
+    if: github.ref == 'refs/heads/main' && vars.R25_ASSISTANT_BACKUP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Use only the approved installed controller
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+          CONTROLLER_SHA256: ${{ vars.R25_ASSISTANT_BACKUP_CONTROLLER_SHA256 }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          [[ "$SERVER_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]+$ ]]
+          [[ "$SERVER_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$SERVER_PORT >= 1 && 10#$SERVER_PORT <= 65535 ))
+          [[ "$CONTROLLER_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test -n "$SERVER_SSH_KEY"
+          test -n "$SERVER_KNOWN_HOSTS"
+          private_dir="$(mktemp -d)"
+          trap 'rm -f "$private_dir/key" "$private_dir/known_hosts"; rmdir "$private_dir"' EXIT
+          printf '%s\n' "$SERVER_SSH_KEY" > "$private_dir/key"
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > "$private_dir/known_hosts"
+          ssh -i "$private_dir/key" -p "$SERVER_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$private_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            "root@$SERVER_HOST" bash -s -- "$CONTROLLER_SHA256" <<'REMOTE'
+          set -Eeuo pipefail
+          umask 077
+          [[ "$1" =~ ^[a-f0-9]{64}$ ]]
+          publisher=/root/autodl-tmp/artlive-r25-native-pg16/handoff-production-20260923T062101Z/operations/r25-publisher/core_publish.py
+          python=/root/miniconda3/bin/python3.10
+          test "$(sha256sum "$publisher" | cut -d ' ' -f 1)" = "$1"
+          "$python" -B "$publisher" assistant-backup-run
+          "$python" -B "$publisher" assistant-backup-retention --apply
+          REMOTE

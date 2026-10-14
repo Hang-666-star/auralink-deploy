@@ -25,6 +25,21 @@ SOURCE_PATHS = tuple(sorted([
     'critic-service/app/orchestrator.py', 'critic-service/app/prompts.py', 'critic-service/app/schemas.py',
     'critic-service/requirements.txt',
 ]))
+ASSISTANT_PATHS = tuple(sorted(SOURCE_PATHS + tuple('critic-service/app/assistant/' + name for name in (
+    '__init__.py','config.py','schemas.py','router.py','execution.py','providers.py','retrieval.py','prompts.py'))))
+
+
+def paths_for(record):
+    schema = record.get('schema')
+    must(schema in ('R25_AI_ACCEPTED_SOURCE_V1','R25_AI_ACCEPTED_SOURCE_V2'), 'ai_record_schema')
+    return SOURCE_PATHS if schema.endswith('_V1') else ASSISTANT_PATHS
+
+
+def source_owner():
+    value=policy()
+    return tuple(value.get('source_owner', [1000,1000]))
+
+
 DEPENDENCIES = ('guide_service/requirements.txt', 'critic-service/requirements.txt')
 OLD_PHASES = {'PREPARED', 'QUIESCE_INTENT', 'QUIESCED', 'STOP_INTENT', 'STOPPED', 'RESTORE_START_INTENT', 'RESTORED'}
 NEW_PHASES = {'START_INTENT', 'ACCEPTED', 'CURRENT_COMMIT_INTENT', 'COMMITTED'}
@@ -60,8 +75,14 @@ def policy():
         values[key] = value
     expected = digest_value(values.get('R25_AI_RELEASE_POLICY_SHA256'))
     result = private_record(STORE / 'POLICY.json', expected)
-    must(result.get('schema') == 'R25_AI_SOURCE_POLICY_V1' and result.get('repository') == REPOSITORY
-         and result.get('source_paths') == list(SOURCE_PATHS), 'ai_policy_identity')
+    v2 = result.get('schema') == 'R25_AI_SOURCE_POLICY_V2'
+    must(result.get('schema') in ('R25_AI_SOURCE_POLICY_V1','R25_AI_SOURCE_POLICY_V2') and
+         result.get('repository') == ('bailangguihun/auralink-ai-service' if v2 else REPOSITORY) and
+         result.get('source_paths') == list(ASSISTANT_PATHS if v2 else SOURCE_PATHS), 'ai_policy_identity')
+    if v2:
+        digest_value(result.get('legacy_policy_sha256'))
+        digest_value(result.get('review_evidence_sha256'))
+        must(type(result.get('source_owner')) is list and len(result['source_owner']) == 2 and all(type(x) is int and x >= 0 for x in result['source_owner']), 'ai_source_owner')
     deps = result.get('dependency_sha256')
     must(type(deps) is dict and set(deps) == set(DEPENDENCIES), 'ai_policy_dependencies')
     for value in deps.values():
@@ -72,20 +93,24 @@ def policy():
 def accepted(ref):
     folder = release_folder(ref)
     record = private_record(folder / 'record.json', ref['record_sha256'])
-    must(record.get('schema') == 'R25_AI_ACCEPTED_SOURCE_V1' and record.get('repository') == REPOSITORY
+    paths = paths_for(record)
+    must(record.get('repository') == (REPOSITORY if paths == SOURCE_PATHS else 'bailangguihun/auralink-ai-service')
          and record.get('commit_sha') == ref['commit_sha'] and record.get('source_tree_sha256') == ref['source_tree_sha256'],
          'ai_record_binding')
     files = record.get('files')
-    must(type(files) is list and len(files) == len(SOURCE_PATHS)
+    must(type(files) is list and len(files) == len(paths)
          and all(type(x) is dict and set(x) == {'path', 'bytes', 'sha256'} for x in files)
-         and [x['path'] for x in files] == list(SOURCE_PATHS), 'ai_record_inventory')
+         and [x['path'] for x in files] == list(paths), 'ai_record_inventory')
     for item in files:
         must(type(item['bytes']) is int and 0 <= item['bytes'] <= 1024 * 1024, 'ai_record_size')
         digest_value(item['sha256'])
     must(sum(x['bytes'] for x in files) <= 5 * 1024 * 1024 and
          hashlib.sha256(canonical(files)).hexdigest() == ref['source_tree_sha256'], 'ai_record_fingerprint')
     policy_value = policy()
-    must(record.get('policy_sha256') == hashlib.sha256(read_file(STORE / 'POLICY.json')).hexdigest(), 'ai_record_policy')
+    approved = {hashlib.sha256(read_file(STORE / 'POLICY.json')).hexdigest()}
+    if paths == SOURCE_PATHS and policy_value.get('schema') == 'R25_AI_SOURCE_POLICY_V2':
+        approved.add(policy_value['legacy_policy_sha256'])
+    must(record.get('policy_sha256') in approved, 'ai_record_policy')
     hashes = {x['path']: x['sha256'] for x in files}
     must(record.get('dependency_sha256') == policy_value['dependency_sha256']
          == {name: hashes[name] for name in DEPENDENCIES}, 'ai_dependencies_require_separate_environment_review')
@@ -117,6 +142,7 @@ def selected_reference():
 
 def verify_live(ref):
     record = accepted(ref)
+    paths = paths_for(record)
     # -B prevents writing bytecode, but Python can still read an old .pyc.
     # Refuse an untracked execution surface rather than deleting caches or
     # silently executing bytes outside the accepted source fingerprint.
@@ -130,9 +156,9 @@ def verify_live(ref):
                 if name.endswith(('.pyc', '.pyo', '.so', '.pyd')):
                     must(False, 'ai_untracked_bytecode_or_native_extension')
                 if name.endswith('.py'):
-                    must(path.relative_to(ROOT / 'release').as_posix() in SOURCE_PATHS, 'ai_untracked_runtime_module')
+                    must(path.relative_to(ROOT / 'release').as_posix() in paths, 'ai_untracked_runtime_module')
     for item in record['files']:
-        raw = read_file(ROOT / 'release' / item['path'], owner=(1000, 1000), mode=0o600, expected=item['sha256'])
+        raw = read_file(ROOT / 'release' / item['path'], owner=source_owner(), mode=0o600, expected=item['sha256'])
         must(len(raw) == item['bytes'], 'ai_live_size')
     return record
 

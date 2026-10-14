@@ -244,11 +244,20 @@ def release_record(artifact_sha, expected_record=None, commit=None):
         must(record.get('artifact_sha256') == artifact_sha and record.get('commit_sha') == commit,
              'business_record_identity')
         if artifact_sha == baseline['artifact_sha256'] and commit == baseline['commit_sha']:
-            must(expected_record == baseline['accepted_record_sha256'] and
-                 record.get('schema') == RECORD_SCHEMA and record.get('repository') == REPOSITORY and
-                 record.get('policy_sha256') == expected['legacy_policy_sha256'] and
-                 record.get('payload_fingerprint') == expected['legacy_policy']['payload_fingerprint'],
-                 'business_rollback_record')
+            if upgrade.get('capability') == 'assistant-v1':
+                prior=upgrade['assistant']
+                must(expected_record==baseline['accepted_record_sha256'] and
+                     record.get('schema')==BUSINESS_RECORD_SCHEMA and
+                     record.get('repository') in ('bailangguihun/auralink-core-api',REPOSITORY) and
+                     record.get('policy_sha256')==prior['baseline_policy_sha256'] and
+                     record.get('payload_fingerprint')==prior['baseline_payload_fingerprint'],
+                     'assistant_verified_v2_rollback_record')
+            else:
+                must(expected_record == baseline['accepted_record_sha256'] and
+                     record.get('schema') == RECORD_SCHEMA and record.get('repository') == REPOSITORY and
+                     record.get('policy_sha256') == expected['legacy_policy_sha256'] and
+                     record.get('payload_fingerprint') == expected['legacy_policy']['payload_fingerprint'],
+                     'business_rollback_record')
         else:
             must(record.get('schema') == BUSINESS_RECORD_SCHEMA and
                  record.get('policy_sha256') == hashlib.sha256(read_file(STORE / 'POLICY.json')).hexdigest(),

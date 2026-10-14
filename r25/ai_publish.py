@@ -46,13 +46,15 @@ def stage(rt, commit, run_id, attempt):
         manifest = candidate.strict_json(raw)
         candidate.verify(manifest, blob, commit, run_id, attempt)
         policy = guard.policy()
+        expected_schema = candidate.ASSISTANT_SCHEMA if policy['schema'] == 'R25_AI_SOURCE_POLICY_V2' else candidate.SCHEMA
+        must(manifest['schema'] == expected_schema and manifest['repository'] == policy['repository'], 'ai_installed_inventory_policy')
         must(manifest['dependency_sha256'] == policy['dependency_sha256'], 'ai_dependency_upgrade_requires_new_environment')
         ref = {'commit_sha': commit, 'source_tree_sha256': manifest['source_tree_sha256'], 'record_sha256': '0' * 64}
         target = guard.release_folder(ref)
         rt.storage.mkdir_private(target)
         rt.storage.mkdir_private(target / 'source')
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
-            for name in guard.SOURCE_PATHS:
+            for name in candidate.inventory(manifest['schema']):
                 path = target / 'source' / name
                 rt.make_parents(path.parent, target / 'source')
                 immutable_bytes(rt, path, archive.read(name))
@@ -65,7 +67,7 @@ def stage(rt, commit, run_id, attempt):
             rt.identity(archive_path, expected_sha256=manifest['archive']['sha256'])
         else:
             rt.storage.atomic_copy_file(folder / candidate.ARCHIVE, archive_path, manifest['archive']['sha256'])
-        record = {'schema': 'R25_AI_ACCEPTED_SOURCE_V1', 'repository': guard.REPOSITORY,
+        record = {'schema': 'R25_AI_ACCEPTED_SOURCE_V2' if manifest['schema'] == candidate.ASSISTANT_SCHEMA else 'R25_AI_ACCEPTED_SOURCE_V1', 'repository': manifest['repository'],
             'commit_sha': commit, 'github_run_id': run_id, 'github_run_attempt': attempt,
             'source_tree_sha256': manifest['source_tree_sha256'], 'files': manifest['files'],
             'dependency_sha256': manifest['dependency_sha256'], 'candidate_manifest_sha256': hashlib.sha256(raw).hexdigest(),

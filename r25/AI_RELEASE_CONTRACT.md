@@ -56,3 +56,7 @@ AI `runtime/ai-publications/` 留存候选、文件副本、accepted record、sn
 `test_ai_runtime.py` 运行真实适配器与临时文件操作，以受控进程/HTTP边界验证顺序、每个 intent 后故障、部分替换、健康失败、恢复失败、外来 PID、源码漂移、依赖变化、跨组件互斥、真实候选解包以及控制器 handoff 安装/撤销。`r25_storage.py` 的 Linux 测试负责 descriptor、owner/mode、原子替换和持久化边界。AI 仓库另外验证真实 Flask/FastAPI 服务的离线契约和候选包完整性。
 
 当前本地结果不能冒充生产进程启动、生产磁盘条件或真实模型调用已验收。服务器空间、首次安装、SSH环境配置、实际发布及恢复演练均在启用开关前完成并记录。
+
+## Assistant S4 源码清单 V2
+
+历史 V1 仍为原仓库和 19 文件；V2 固定转移后 `bailangguihun/auralink-ai-service` 与 27 文件，增加 8 个 Assistant 模块且 requirements 摘要保持。CLI create 默认 V2，verify 根据明确版本检查完整清单，旧 V1仍可验证。生产已安装 policy 必须先受审升级，入站包不能自行选择允许的版本。before=absent 新源码、受控目录和删除恢复进入同一 AIRuntime journal；不删除未知文件。具体 controller/config/存储顺序及尚未确认事实见 [Assistant 发布契约](../docs/assistant-release.md)。

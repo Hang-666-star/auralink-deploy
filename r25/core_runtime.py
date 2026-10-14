@@ -216,6 +216,13 @@ class CoreRuntime:
     def require_no_active_work(self):
         value = self.query(IDLE_SQL)
         must(value.isdecimal() and int(value) == 0, 'active_work_or_unknown')
+        policy=guard.policy()
+        if policy.get('upgrade',{}).get('capability')=='assistant-v1':
+            module=guard.business_module(policy)
+            ledger=guard.strict_json(self.query(module.ASSISTANT_LEDGER_SQL))['ledger']
+            if len(ledger)>=15:
+                active=self.query(module.ASSISTANT_IDLE_SQL)
+                must(active.isdecimal() and int(active)==0,'assistant_executing_or_uploading_work')
 
     def verify_current(self, release):
         self.require_lease()
@@ -288,6 +295,11 @@ class CoreRuntime:
             # login/token issuance. Invalid/expired credentials fail acceptance.
             receipt['knowledge'] = verify_knowledge_http(
                 self.query, value, get_authenticated=authenticated_request(token))
+            if (value['upgrade'].get('capability')=='assistant-v1' and
+                    release.artifact_sha256==value['upgrade']['candidate']['artifact_sha256']):
+                path=ROOT/'operations/r25-publisher/assistant_acceptance.py'
+                module=guard.source_module(path,'r25_bound_assistant_acceptance',guard.read_file(path,expected=value['runtime_modules']['assistant_acceptance.py']))
+                receipt['assistant']=module.verify_assistant_http(value,get_authenticated=authenticated_request(token))
         return receipt
 
     def snapshot(self, current, candidate):
@@ -363,6 +375,11 @@ class CoreRuntime:
 
     def require_terminal_component_transactions(self):
         self.require_terminal_application_transactions()
+        backup_active = ROOT / 'runtime/assistant-backups/assistant-daily-v1/ACTIVE.json'
+        if backup_active.exists():
+            module = self.assistant_backup_module()
+            must(module is not None, 'assistant_backup_controller_required')
+            module.require_terminal(self)
         active_path = STORE / 'CONTROL_UPGRADE_ACTIVE.json'
         if active_path.exists():
             active = self.read(active_path)
@@ -419,6 +436,35 @@ class CoreRuntime:
             must(expected['path'] == str(LIVE_FILES[name]), 'snapshot_fixed_path')
             self.identity(folder / 'before' / name, expected_sha256=expected['sha256'])
         return document
+
+    def assistant_module(self):
+        value=guard.policy()
+        if value.get('upgrade',{}).get('capability') != 'assistant-v1':
+            return None
+        # Pin the imported helper before loading its consumer; Python -B alone
+        # would still accept preexisting .pyc. Never import candidate code.
+        for name in ('assistant_release.py','assistant_runtime.py'):
+            path=ROOT/'operations/r25-publisher'/name
+            module=guard.source_module(path,name[:-3],guard.read_file(path,expected=value['runtime_modules'][name]))
+        return module
+
+    def assistant_backup_module(self):
+        if self.assistant_module() is None:
+            return None
+        policy = guard.policy()
+        path = ROOT / 'operations/r25-publisher/assistant_backup.py'
+        return guard.source_module(path, 'assistant_backup', guard.read_file(
+            path, expected=policy['runtime_modules']['assistant_backup.py']))
+
+    def prepare_forward_schema(self,current,candidate,snapshot_id):
+        module=self.assistant_module()
+        if module is not None:
+            module.before_install(self,current,candidate,snapshot_id)
+
+    def verify_forward_recovery(self,plan):
+        module=self.assistant_module()
+        if module is not None:
+            module.recovery(self,plan)
 
     def install_candidate(self, candidate, snapshot_id):
         self.require_lease()
