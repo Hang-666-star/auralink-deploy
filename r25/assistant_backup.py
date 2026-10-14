@@ -260,6 +260,7 @@ def generation_control(rt, contract, action):
     marker = root / release.GENERATION_MARKER
     owner = (root.stat().st_uid, root.stat().st_gid)
     marker_digest = release.sha(release.GENERATION_MARKER_BYTES)
+    must(not marker.is_symlink(), 'assistant_generation_marker_symlink')
     present = marker.exists()
     if present:
         rt.identity(marker, expected_sha256=marker_digest, expected_owner=owner, expected_mode=0o600)

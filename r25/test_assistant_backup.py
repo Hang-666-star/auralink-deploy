@@ -181,5 +181,20 @@ class ScheduledTests(unittest.TestCase):
         with self.assertRaises(StorageRefused): backup.generation_control(self.rt, self.contract, 'resume')
         self.assertEqual(marker.read_bytes(), b'foreign')
 
+    def test_dangling_marker_symlink_rejects_all_actions_before_any_journal_write(self):
+        outside = self.root/'other-module'; outside.mkdir()
+        sentinel = outside/'keep'; sentinel.write_bytes(b'preserve external bytes')
+        missing = outside/'missing'
+        marker = self.root/'attachments'/release.GENERATION_MARKER
+        marker.symlink_to(missing)
+        for action in ('status', 'suspend', 'resume'):
+            with self.assertRaisesRegex(Refused, 'marker_symlink'):
+                backup.generation_control(self.rt, self.contract, action)
+            self.assertTrue(marker.is_symlink())
+            self.assertFalse(missing.exists())
+            self.assertFalse((self.root/'runtime/core-publications/ASSISTANT_GENERATION_CONTROL.json').exists())
+            self.assertFalse((self.root/'runtime/core-publications/generation-control-history').exists())
+            self.assertEqual(sentinel.read_bytes(), b'preserve external bytes')
+
 
 if __name__ == '__main__': unittest.main()
