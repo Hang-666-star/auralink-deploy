@@ -138,6 +138,10 @@ def main(argv=None):
     for name in ('recover', 'rollback'):
         modes.add_parser(name).add_argument('--transaction', required=True)
     modes.add_parser('status')
+    for name in ('assistant-backup-run', 'assistant-backup-recover', 'assistant-backup-status'):
+        modes.add_parser(name)
+    modes.add_parser('assistant-backup-retention').add_argument('--apply', action='store_true')
+    modes.add_parser('assistant-generation').add_argument('action', choices=('status', 'suspend', 'resume'))
     args = parser.parse_args(argv)
     try:
         rt = CoreRuntime()
@@ -149,6 +153,27 @@ def main(argv=None):
                       if args.command == 'stage' else asdict(Publisher(rt).publish(release)))
         elif args.command in {'recover', 'rollback'}:
             result = asdict(getattr(Publisher(rt), args.command)(args.transaction))
+        elif args.command.startswith('assistant-'):
+            with rt.lease():
+                module = rt.assistant_backup_module()
+                must(module is not None, 'assistant_controller_required')
+                contract = guard.policy()['upgrade']['assistant']
+                if args.command == 'assistant-generation':
+                    result = module.generation_control(rt, contract, args.action)
+                elif args.command == 'assistant-backup-status':
+                    path = guard.ROOT / 'runtime/assistant-backups/assistant-daily-v1/ACTIVE.json'
+                    result = {'outcome': 'NOT_STARTED'} if not path.exists() else rt.read(path)
+                    if path.exists():
+                        module.require_terminal(rt)
+                        result['outcome'] = 'BACKUP_TERMINAL_VERIFIED'
+                else:
+                    job = module.ScheduledBackup(rt, contract)
+                    if args.command == 'assistant-backup-run':
+                        result = job.run()
+                    elif args.command == 'assistant-backup-recover':
+                        result = job.recover()
+                    else:
+                        result = job.retention(apply=args.apply)
         else:
             with rt.lease():
                 release = rt.current()

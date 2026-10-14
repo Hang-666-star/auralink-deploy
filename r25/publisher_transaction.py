@@ -121,6 +121,9 @@ class Publisher:
     def _restore(self, plan):
         rt = self.runtime
         rt.validate_recovery(plan)
+        check_forward=getattr(rt,'verify_forward_recovery',None)
+        if check_forward is not None:
+            check_forward(plan)
         # Re-read live DB state. Earlier acceptance/zero counts do not authorize
         # a later downgrade once records/reservations or in-flight work exist.
         rt.require_compatible(plan.current)
@@ -173,6 +176,9 @@ class Publisher:
                 # stop; do not silently proceed with a now-stale idle proof.
                 rt.require_no_active_work()
                 rt.require_compatible(candidate)
+                forward=getattr(rt,'prepare_forward_schema',None)
+                if forward is not None:
+                    forward(current,candidate,snapshot_id)
                 rt.record(transaction_id, "INSTALL_INTENT")
                 rt.install_candidate(candidate, snapshot_id)
                 rt.record(transaction_id, "INSTALLED")

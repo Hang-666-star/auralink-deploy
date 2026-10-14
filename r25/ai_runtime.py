@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
+import os
+import stat
 import re
 import secrets
 import shutil
@@ -102,6 +104,10 @@ class AIRuntime:
         return record
 
     def other_transactions_idle(self):
+        if (ROOT / 'runtime/assistant-backups/assistant-daily-v1/ACTIVE.json').exists():
+            backup = self.core.assistant_backup_module()
+            must(backup is not None, 'assistant_backup_controller_required')
+            backup.require_terminal(self.core)
         for store, schema in ((guard.core.STORE, 'R25_CORE_TRANSACTION_V1'), (STORE, 'R25_AI_TRANSACTION_V1')):
             try:
                 active = guard.private_record(store / 'ACTIVE.json')
@@ -165,24 +171,32 @@ class AIRuntime:
         engine = self.core.engine()
         health = self.health(engine)
         self.core.require_no_active_work()
-        files = {item['path']: {'before': item, 'after': target}
-                 for item, target in zip(before['files'], after['files'])}
+        old = {item['path']: item for item in before['files']}
+        new = {item['path']: item for item in after['files']}
+        must(set(old) <= set(new) and set(new) in (set(guard.SOURCE_PATHS),set(guard.ASSISTANT_PATHS)), 'ai_inventory_transition')
+        files = {name: {'before':old.get(name),'after':new[name]} for name in sorted(new)}
+        new_directory = ROOT / 'release/critic-service/app/assistant'
+        added = set(new)-set(old)
+        if added:
+            must(added == set(guard.ASSISTANT_PATHS)-set(guard.SOURCE_PATHS) and not new_directory.exists() and not new_directory.is_symlink(), 'ai_new_directory_must_be_absent')
         changed = sorted({role(name) for name, value in files.items() if value['before'] != value['after']})
-        must(shutil.disk_usage(STORE).free > 64 * 1024 * 1024 + sum(x['before']['bytes'] for x in files.values()) * 3,
+        must(shutil.disk_usage(STORE).free > 64 * 1024 * 1024 + sum(x['before']['bytes'] for x in files.values() if x['before'] is not None) * 3,
              'ai_snapshot_disk_space')
         tx = secrets.token_hex(16)
         folder = self.transaction(tx)
         self.storage.mkdir_private(folder)
         self.storage.mkdir_private(folder / 'before')
         for name, value in files.items():
+            if value['before'] is None:
+                continue
             destination = folder / 'before' / name
             self.make_parents(destination.parent, folder / 'before')
             self.storage.atomic_copy_file(ROOT / 'release' / name, destination, value['before']['sha256'],
-                                          source_owner=(1000, 1000), expected_bytes=value['before']['bytes'])
+                                          source_owner=guard.source_owner(), expected_bytes=value['before']['bytes'])
         document = {'schema': 'R25_AI_SNAPSHOT_V1', 'transaction_id': tx, 'current': current, 'candidate': candidate,
                     'core': asdict(paired_core), 'before_current': before_current,
                     'minimum_total': self.core.last_http['gallery_total'], 'files': files, 'changed_roles': changed,
-                    'before_health': health}
+                    'before_health': health, 'created_directories': ['critic-service/app/assistant'] if added else [], 'source_owner':list(guard.source_owner())}
         self.identity(STORE / 'CURRENT.json', expected_sha256=before_current_sha)
         self.storage.atomic_write_json(folder / 'snapshot.json', document)
         self.storage.atomic_write_json(folder / 'journal.json', {'schema': 'R25_AI_TRANSACTION_V1',
@@ -205,15 +219,24 @@ class AIRuntime:
         must(asdict(self.core.current()) == snapshot['core'], 'paired_core_changed')
         before = self.verify_candidate(snapshot['current'])
         after = self.verify_candidate(snapshot['candidate'])
-        must(set(snapshot['files']) == set(guard.SOURCE_PATHS), 'ai_snapshot_inventory')
-        expected = {x['path']: {'before': x, 'after': y} for x, y in zip(before['files'], after['files'])}
+        old={x['path']:x for x in before['files']}; new={x['path']:x for x in after['files']}
+        must(set(old)<=set(new) and set(snapshot['files']) == set(new), 'ai_snapshot_inventory')
+        expected={name:{'before':old.get(name),'after':new[name]} for name in sorted(new)}
+        must(snapshot.get('source_owner',list(guard.source_owner())) == list(guard.source_owner()), 'ai_source_owner_drift')
+        must(snapshot.get('created_directories',[]) == (['critic-service/app/assistant'] if set(new)-set(old) else []), 'ai_created_directory_binding')
         must(snapshot['files'] == expected, 'ai_snapshot_source_records')
         must(snapshot['changed_roles'] == sorted({role(p) for p, v in expected.items() if v['before'] != v['after']}),
              'ai_snapshot_roles')
         for path, value in expected.items():
-            self.identity(self.transaction(tx) / 'before' / path, expected_sha256=value['before']['sha256'])
-            actual = self.identity(ROOT / 'release' / path, expected_owner=(1000, 1000))
-            must(actual['sha256'] in {value['before']['sha256'], value['after']['sha256']}, 'ai_foreign_source_drift')
+            if value['before'] is not None:
+                self.identity(self.transaction(tx) / 'before' / path, expected_sha256=value['before']['sha256'])
+            target=ROOT/'release'/path
+            if value['before'] is None and not target.exists():
+                must(not target.is_symlink(),'ai_foreign_source_drift')
+                continue
+            actual=self.identity(target, expected_owner=guard.source_owner())
+            allowed={value['after']['sha256']} | ({value['before']['sha256']} if value['before'] is not None else set())
+            must(actual['sha256'] in allowed,'ai_foreign_source_drift')
         return journal, snapshot
 
     def partial_engine(self):
@@ -244,15 +267,29 @@ class AIRuntime:
 
     def copy_source(self, tx, *, restore=False):
         _, snapshot = self.validate_recovery(tx)
+        owner=tuple(snapshot.get('source_owner',guard.source_owner()))
+        for name in snapshot.get('created_directories',[]):
+            target=ROOT/'release'/name
+            if not restore:
+                self.storage.mkdir_private(target,target_owner=owner)
         for name, value in snapshot['files'].items():
             if value['before'] == value['after']:
                 continue
             target = ROOT / 'release' / name
-            actual = self.identity(target, expected_owner=(1000, 1000))['sha256']
+            actual = self.identity(target, expected_owner=owner)['sha256'] if target.exists() else None
+            if restore and value['before'] is None:
+                if actual is not None:
+                    self.storage.remove_bound_file(target,value['after']['sha256'],expected_owner=owner)
+                continue
             item = value['before' if restore else 'after']
             source = self.transaction(tx) / 'before' / name if restore else guard.release_folder(snapshot['candidate']) / 'source' / name
             self.storage.atomic_copy_file(source, target, item['sha256'], expected_bytes=item['bytes'],
-                target_owner=(1000, 1000), replace=True, expected_existing_sha256=actual, existing_owner=(1000, 1000))
+                target_owner=owner, replace=actual is not None, expected_existing_sha256=actual, existing_owner=owner)
+        if restore:
+            for name in reversed(snapshot.get('created_directories',[])):
+                target=ROOT/'release'/name
+                if target.exists():
+                    self.storage.remove_empty_directory(target,expected_owner=owner)
 
     def start_changed(self, tx, *, restoring=False):
         _, snapshot = self.validate_recovery(tx)

@@ -46,6 +46,10 @@ RETENTION_SQL = "BEGIN READ ONLY; SET LOCAL statement_timeout='8000ms';\nSELECT 
     "),'active_work',(SELECT count(*) FROM creations WHERE status IN ('QUEUED','RUNNING'))+(SELECT count(*) FROM catalog_painting_critic_tasks WHERE status IN ('QUEUED','RUNNING'))+(SELECT count(*) FROM catalog_painting_guide_generation_attempts WHERE status IN ('DISPATCHING','POST_RESPONSE_UNCERTAIN')))::text;\nROLLBACK;"
 
 
+ASSISTANT_IDLE_SQL = "BEGIN READ ONLY; SET LOCAL statement_timeout='8000ms'; SELECT (SELECT count(*) FROM assistant_runs WHERE status='EXECUTING')+(SELECT count(*) FROM assistant_attachments WHERE status='UPLOADING'); ROLLBACK;"
+ASSISTANT_LEDGER_SQL = "BEGIN READ ONLY; SELECT jsonb_build_object('ledger',coalesce(jsonb_agg(jsonb_build_object('version',version,'sha256',checksum) ORDER BY version),'[]'::jsonb))::text FROM prototype_schema_migrations; ROLLBACK;"
+
+
 class Refused(RuntimeError):
     pass
 
@@ -170,9 +174,11 @@ def validate_policy(policy):
             digest(value)
     must(set(policy['controllers']) == {'lifecycle_adapter.py', 'r25-production-java-launch.py', 'core_release_guard.py'},
          'business_controller_contract')
-    must(set(policy['runtime_modules']) == RUNTIME_MODULES, 'business_module_binding')
+    assistant=policy.get('upgrade',{}).get('capability')=='assistant-v1'
+    expected_modules=RUNTIME_MODULES | ({'assistant_release.py','assistant_runtime.py','assistant_runtime_overlay.py','assistant_acceptance.py','assistant_backup.py','upgrade_assistant_controller.py'} if assistant else set())
+    must(set(policy['runtime_modules']) == expected_modules, 'business_module_binding')
     up = policy.get('upgrade')
-    must(type(up) is dict and up.get('capability') == 'knowledge-read-v1', 'business_capability')
+    must(type(up) is dict and up.get('capability') in ('knowledge-read-v1','assistant-v1'), 'business_capability')
     keys = config_keys(up.get('release_profile'), isolation_mode(policy))
     map_enabled = up['release_profile'] == 'map-enabled'
     identity = up.get('candidate')
@@ -196,9 +202,9 @@ def validate_policy(policy):
          legacy['payload_fingerprint'] != identity['payload_fingerprint'], 'business_not_equivalent_repackaging')
     digest(up.get('web_commit'), 40)
     config = up.get('configuration')
-    must(type(config) is dict and set(config) == {'before_sha256', 'after_sha256', 'knowledge'}, 'business_configuration')
+    must(type(config) is dict and set(config) == ({'before_sha256', 'after_sha256', 'knowledge','assistant'} if assistant else {'before_sha256', 'after_sha256', 'knowledge'}), 'business_configuration')
     digest(config['before_sha256']); digest(config['after_sha256'])
-    must(config['before_sha256'] == legacy['application_configuration_sha256'] and
+    must((assistant or config['before_sha256'] == legacy['application_configuration_sha256']) and
          config['before_sha256'] != config['after_sha256'], 'business_configuration_baseline')
     must(type(config['knowledge']) is dict and set(config['knowledge']) == set(keys), 'business_configuration_keys')
     must(config['knowledge']['map-enabled'] is map_enabled, 'business_configuration_profile')
@@ -270,7 +276,22 @@ def validate_policy(policy):
              acl['credential_uid'] == pg['credential_uid'], 'business_traversal_acl_credential')
         must(Path('/root') in absolute(config['knowledge']['snapshot-root']).parents,
              'business_traversal_acl_ancestor')
+    if assistant:
+        module=assistant_module(policy)
+        module.validate_contract(up.get('assistant'))
+        must(up['assistant'].get('policy_status') == 'PRODUCTION_REVIEWED',
+             'assistant_isolated_policy_not_installable')
+        must(up['assistant']['artifacts']['core']['sha256']==identity['artifact_sha256'] and
+             up['assistant']['configuration_sha256']==config['after_sha256'] and
+             up['assistant']['compatible_recovery_jar_sha256']==baseline['artifact_sha256'],'assistant_policy_binding')
     return policy
+
+
+def assistant_module(policy):
+    import core_release_guard as guard
+    path=Path(__file__).with_name('assistant_release.py')
+    raw=read_bound(path,expected=policy['runtime_modules']['assistant_release.py'],expected_owner=policy['installation']['private_owner'],mode=0o600)
+    return guard.source_module(path,'r25_bound_assistant_release',raw)
 
 
 def candidate_matches(policy, record):
@@ -297,6 +318,26 @@ def render_configuration(before, policy):
         text = before.decode('utf-8')
     except UnicodeError as error:
         raise Refused('business_configuration_encoding') from error
+    if policy['upgrade']['capability']=='assistant-v1':
+        values=config['assistant']
+        allowed={'enabled','history-only','attachment-root','execution.enabled','execution.ai-base-url','execution.internal-token-file','execution.expected-config-sha256','execution.allow-loopback-http','storage.quota-bytes','storage.draft-lifetime','storage.minimum-free-bytes','storage.cleanup-enabled'}
+        must(type(values) is dict and set(values)==allowed,'assistant_configuration_keys')
+        must(values['storage.cleanup-enabled'] is False and type(values['enabled']) is bool and type(values['history-only']) is bool and type(values['execution.enabled']) is bool and type(values['execution.allow-loopback-http']) is bool,'assistant_configuration_mode')
+        storage={key:value for key,value in values.items() if key.startswith('storage.')}
+        must(sha(json.dumps(storage,sort_keys=True,separators=(',',':')).encode())==policy['upgrade']['assistant']['storage_policy_sha256'],'assistant_storage_policy_binding')
+        must(values['attachment-root']==policy['upgrade']['assistant']['attachment_root'],'assistant_storage_root_binding')
+        mode=policy['upgrade']['assistant']['mode']
+        must(values['enabled']==(mode!='disabled') and values['history-only']==(mode=='history-only') and values['execution.enabled']==(mode=='enabled'),'assistant_configuration_mode')
+        must(not re.search(r'(?im)^\s*(?:assistant|auralink\.assistant(?:\.[a-zA-Z0-9_-]+)*)\s*:',text),'assistant_configuration_existing')
+        # Knowledge is retained exactly; no duplicate aliases or map enablement.
+        for key,value in config['knowledge'].items():
+            line='auralink.knowledge.'+key+': '+json.dumps(value,ensure_ascii=True)
+            must(text.splitlines().count(line)==1,'assistant_existing_knowledge_configuration')
+        after=before+(b'' if before.endswith(b'\n') else b'\n')+b'\n# R25 reviewed Assistant configuration\n'
+        for key,value in sorted(values.items()):
+            after+=('auralink.assistant.'+key+': '+json.dumps(value,ensure_ascii=True)+'\n').encode()
+        must(sha(after)==config['after_sha256'],'business_configuration_after')
+        return after
     # Finite first-install transformation, not a permissive YAML editor. Dotted
     # Spring property names avoid rewriting the existing nested auralink block.
     # Refuse preexisting aliases of knowledge, YAML documents/directives and
@@ -487,7 +528,7 @@ def acceptance_queries(policy):
 def readonly_query(policy, sql, lease_fd):
     validate_policy(policy)
     pg = policy['installation']['postgres']
-    must(type(sql) is str and sql in {RETENTION_SQL, *acceptance_queries(policy)}, 'business_readonly_sql_contract')
+    must(type(sql) is str and sql in ({RETENTION_SQL, *acceptance_queries(policy)} | ({ASSISTANT_LEDGER_SQL,ASSISTANT_IDLE_SQL} if policy['upgrade']['capability']=='assistant-v1' else set())), 'business_readonly_sql_contract')
     must(type(lease_fd) is int and lease_fd >= 0, 'business_lease_required')
     # Credential owner comes from the approved native installation and actual
     # account database, never from the credential file's current stat alone.
@@ -549,7 +590,7 @@ def verify_compatibility(policy, query):
          manifest['schema'] == 'R25_CORE_RETAINED_DATA_V1', 'business_retention_manifest')
     pg = policy['installation']['postgres']
     must(manifest['database'] == pg['database'] and manifest['port'] == pg['port'] and manifest['major'] == 16 and
-         manifest['versions'] == ['V%03d' % x for x in range(1, 14)] and type(manifest['tables']) is dict and
+         (manifest['versions'] == ['V%03d' % x for x in range(1, 14)] if up['capability']=='knowledge-read-v1' else manifest['versions'] in [['V%03d' % x for x in range(1,n+1)] for n in (13,15,16)]) and type(manifest['tables']) is dict and
          set(manifest['tables']) == set(TABLES), 'business_retention_identity')
     for value in manifest['tables'].values():
         must(type(value) is dict and set(value) == {'rows', 'md5'} and type(value['rows']) is int and value['rows'] >= 0,
@@ -561,7 +602,14 @@ def verify_compatibility(policy, query):
         raise Refused('business_retention_query_unknown') from error
     must(type(current) is dict and set(current) == {'database', 'port', 'major', 'versions', 'tables', 'active_work'} and
          type(current['active_work']) is int and current['active_work'] == 0, 'business_active_work_or_unknown')
-    must(all(current[key] == manifest[key] for key in ('database', 'port', 'major', 'versions', 'tables')),
+    if up['capability']=='assistant-v1':
+        helper=assistant_module(policy)
+        ledger=strict_json(query(ASSISTANT_LEDGER_SQL))['ledger']
+        entries=up['assistant']['migrations']; helper.migration_inventory(entries)
+        must(len(ledger) in helper.PREFIX_LENGTHS and ledger==[{'version':x['version'],'sha256':x['sha256']} for x in entries[:len(ledger)]],'assistant_live_schema_binding')
+        must(current['versions']==[x['version'] for x in ledger],'assistant_schema_observation')
+    comparison=('database','port','major','tables') if up['capability']=='assistant-v1' else ('database','port','major','versions','tables')
+    must(all(current[key] == manifest[key] for key in comparison),
          'business_retained_data_drift')
     # Exact media inventory in an approved private manifest is intentionally
     # strict; arbitrary historic JARs and missing/changed media cannot qualify.
@@ -635,13 +683,13 @@ def verify_process(policy, pid, start_ticks, configuration_path, *, proc_root=Pa
         must(status.get('CapEff') is not None and int(status['CapEff'], 16) == 0, 'business_process_service_identity')
     environment = read('environ').split(b'\0')
     keys = [entry.partition(b'=')[0].decode('ascii', errors='strict') for entry in environment if entry]
-    must(len(keys) == len(set(keys)) and not any(key.startswith(('SPRING_', 'AURALINK_KNOWLEDGE_')) or
+    must(len(keys) == len(set(keys)) and not any(key.startswith(('SPRING_', 'AURALINK_KNOWLEDGE_') + (('AURALINK_ASSISTANT_',) if policy['upgrade']['capability']=='assistant-v1' else ())) or
          key in {'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS'} for key in keys),
          'business_process_configuration_override')
     args = [x.decode('utf-8') for x in read('cmdline').split(b'\0') if x]
     required = '--spring.config.additional-location=file:' + config
     must(args.count(required) == 1 and not any(
-        (arg.startswith(('--spring.config', '-Dspring.', '--auralink.knowledge', '-Dauralink.')) and arg != required)
+        (arg.startswith(('--spring.config', '-Dspring.', '--auralink.knowledge', '-Dauralink.') + (('--auralink.assistant',) if policy['upgrade']['capability']=='assistant-v1' else ())) and arg != required)
         for arg in args), 'business_process_configuration_override')
     must(ticks() == start_ticks, 'business_process_identity')
     return {'service_uid': service['uid'], 'service_gid': service['gid'],

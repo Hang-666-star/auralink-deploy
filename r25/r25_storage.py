@@ -284,6 +284,24 @@ class R25Storage:
                     os.close(directory_fd)
             return Path(str(value))
 
+    def remove_bound_file(self, path, expected_sha256, *, expected_owner):
+        """Remove only a transaction-created after-image, never an unknown file."""
+        with self._parent(path) as (parent_fd,name,_):
+            observed=self.file_identity(path,expected_sha256=expected_sha256,expected_owner=expected_owner)
+            named=os.stat(name,dir_fd=parent_fd,follow_symlinks=False)
+            must(stat.S_ISREG(named.st_mode) and named.st_nlink==1,"remove_regular_file")
+            # file_identity already uses no-follow descriptors; recheck inode before unlink.
+            with self._file(path,owner=expected_owner,mode=0o600) as (fd, info, _value):
+                must((named.st_dev,named.st_ino)==(info.st_dev,info.st_ino),"remove_inode_drift")
+                os.unlink(name,dir_fd=parent_fd)
+                os.fsync(parent_fd)
+
+    def remove_empty_directory(self,path,*,expected_owner):
+        with self._parent(path) as (parent_fd,name,_):
+            self.validate_target(path,exists=True,directory=True,expected_owner=expected_owner,expected_mode=0o700)
+            os.rmdir(name,dir_fd=parent_fd)  # Refuses nonempty/unknown additions.
+            os.fsync(parent_fd)
+
     @staticmethod
     def _write(fd, data):
         remaining = memoryview(data)
