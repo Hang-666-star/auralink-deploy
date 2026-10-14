@@ -18,7 +18,16 @@ import shutil
 import stat
 import subprocess
 
-from publisher_transaction import Refused
+
+class Refused(RuntimeError):
+    """Standalone refusal for source-bound launcher validation.
+
+    The Java launcher loads this helper by verified bytes without the private
+    publisher directory on sys.path. Do not resolve a sibling transaction
+    module or trust an ambient module cache merely to report a refusal.
+    """
+
+    pass
 
 SCHEMA = 'R25_ASSISTANT_RELEASE_V1'
 VERSIONS = tuple(f'V{i:03}' for i in range(1, 17))

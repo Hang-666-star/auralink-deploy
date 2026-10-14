@@ -23,7 +23,7 @@ class AssistantGuards(unittest.TestCase):
             for i,(name,digest) in enumerate(ar.MIGRATION_SHA256.items(),1):
                 p=root/name;p.write_text('-- attacker changed source and rebound its own manifest\n')
                 entries.append({'version':f'V{i:03}','name':name,'path':str(p),'sha256':ar.sha(p.read_bytes())})
-            with self.assertRaisesRegex(Refused,'unreviewed_migration_bytes'):
+            with self.assertRaisesRegex(ar.Refused,'unreviewed_migration_bytes'):
                 ar.migration_inventory(entries)
 
     def test_unknown_schema_is_not_permitted_range(self):
@@ -39,9 +39,9 @@ class AssistantGuards(unittest.TestCase):
             image=root/('a'*8+'-'+'a'*4+'-'+'a'*4+'-'+'a'*4+'-'+'a'*12+'.blob');image.write_bytes(b'private fixture');image.chmod(0o600)
             self.assertEqual(len(ar.file_inventory(root)),2)
             image.chmod(0o644)
-            with self.assertRaisesRegex(Refused,'permissions'):ar.file_inventory(root)
+            with self.assertRaisesRegex(ar.Refused,'permissions'):ar.file_inventory(root)
             image.chmod(0o600);(root/'catalog.jpg').write_bytes(b'not owned')
-            with self.assertRaisesRegex(Refused,'unowned'):ar.file_inventory(root)
+            with self.assertRaisesRegex(ar.Refused,'unowned'):ar.file_inventory(root)
 
     def test_controller_rejects_v1_impersonation(self):
         plan={'schema':uc.SCHEMA,'from_policy_schema':'R25_CORE_EQUIVALENT_PAYLOAD_POLICY_V1','deploy':{},'current_release':{},'next_owner':'c5ea','controller_owner':[os.getuid(),os.getgid()],'private_owner':[os.getuid(),os.getgid()],'files':{},'operational':{},'review_evidence_sha256':'a'*64}

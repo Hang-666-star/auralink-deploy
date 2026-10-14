@@ -7,11 +7,16 @@ tests do not create project approval. Fixed targets exclude DB/data/credentials.
 """
 from __future__ import annotations
 from dataclasses import asdict
+import copy
 import hashlib
+import io
+import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
+import zipfile
 
 # Formal source bundle must not execute stale sibling bytecode.
 if __name__ == "__main__":
@@ -33,6 +38,27 @@ FILES=('assistant_release.py','assistant_runtime.py','assistant_runtime_overlay.
        'ai_release_candidate.py','ai_release_guard.py','ai_runtime.py','ai_publish.py')
 OPERATIONAL=('guard','critic-wrapper','lifecycle','ai-guard','ai-policy','policy','handoff')
 PHASES={'PREPARED','INSTALL_INTENT','INSTALLED','RESTORE_INTENT','RESTORED','RECOVERY_REQUIRED'}
+
+# This is a controller-only repair for the observed failed AI restoration, not
+# an alternate application launcher or a general permission to edit policy.
+REPAIR_SCHEMA='R25_ASSISTANT_LAUNCHER_IMPORT_REPAIR_V1'
+REPAIR_TX='a540f3f722f13acaaebceb0c785af083'
+REPAIR_FILES=('assistant_release.py','policy','handoff')
+REPAIR_PHASES={'PREPARED','INSTALL_INTENT','INSTALLED','RESTORE_INTENT','RESTORED','RECOVERY_REQUIRED'}
+REPAIR_OLD=b'from publisher_transaction import Refused\n'
+REPAIR_NEW=b'''\nclass Refused(RuntimeError):
+    """Standalone refusal for source-bound launcher validation.
+
+    The Java launcher loads this helper by verified bytes without the private
+    publisher directory on sys.path. Do not resolve a sibling transaction
+    module or trust an ambient module cache merely to report a refusal.
+    """
+
+    pass
+'''
+REPAIR_BUNDLE_FILES=frozenset(FILES)|{'ai-baseline.json','control_overlay.py','core_acceptance.py',
+    'core-release-candidate.py','core_asset_sandbox.py','upgrade_core_controller.py',
+    'install_ai_controller.py','install_core_controller.py','verify-r25-artifact.py'}
 
 
 def must(ok,why):
@@ -237,16 +263,334 @@ def recover(rt,plan,bundle,*,approval_sha256):
         record['phase']='RESTORED';rt.write(folder/'journal.json',record);return 'RESTORED'
 
 
+def validate_launcher_repair(plan):
+    must(type(plan)is dict and set(plan)=={'schema','deploy','installed_control','current_release','preserved','ai',
+        'services','next_owner','controller_owner','private_owner','files','review_evidence_sha256'},'launcher_repair_plan_fields')
+    must(plan['schema']==REPAIR_SCHEMA and plan['next_owner']=='c5ea','launcher_repair_schema')
+    deployment=plan['deploy']
+    must(type(deployment)is dict and set(deployment)=={'repository','ref','commit','run_id','run_attempt',
+        'archive_sha256','manifest_sha256','tool_sha256'},'launcher_repair_deploy_fields')
+    must(deployment['repository']=='bailangguihun/auralink-deploy' and deployment['ref']=='refs/heads/release','launcher_repair_formal_source')
+    guard.digest_value(deployment['commit'],40)
+    for key in ('run_id','run_attempt'):
+        must(type(deployment[key])is str and re.fullmatch('[1-9][0-9]{0,19}',deployment[key]),'launcher_repair_formal_run')
+    for key in ('archive_sha256','manifest_sha256','tool_sha256'):guard.digest_value(deployment[key])
+    guard.digest_value(plan['review_evidence_sha256'])
+    must(type(plan['installed_control'])is dict and set(plan['installed_control'])=={'approval_sha256','journal_sha256'},'launcher_repair_installed_binding')
+    for value in plan['installed_control'].values():guard.digest_value(value)
+    must(type(plan['current_release'])is dict and set(plan['current_release'])=={'commit_sha','artifact_sha256','accepted_record_sha256'},'launcher_repair_core_binding')
+    for key,value in plan['current_release'].items():guard.digest_value(value,40 if key=='commit_sha' else 64)
+    must(type(plan['preserved'])is dict and set(plan['preserved'])=={'release-jar','preview-jar','manifest','application'},'launcher_repair_preserved_inventory')
+    for value in plan['preserved'].values():guard.digest_value(value)
+    must(plan['preserved']['release-jar']==plan['preserved']['preview-jar']==plan['current_release']['artifact_sha256'],'launcher_repair_preserved_jar_binding')
+    ai=plan['ai']
+    must(type(ai)is dict and set(ai)=={'transaction_id','active_sha256','journal_sha256','snapshot_sha256','current_sha256','source_tree_sha256'} and ai['transaction_id']==REPAIR_TX,'launcher_repair_exact_ai_transaction')
+    for key,value in ai.items():
+        if key!='transaction_id':guard.digest_value(value)
+    for key in ('controller_owner','private_owner'):
+        must(type(plan[key])is list and len(plan[key])==2 and all(type(x)is int and x>=0 for x in plan[key]),'launcher_repair_owner')
+    must(type(plan['services'])is dict and set(plan['services'])=={'guide','critic'},'launcher_repair_service_inventory')
+    for identity in plan['services'].values():
+        must(type(identity)is dict and set(identity)=={'pid','ticks'} and type(identity['pid'])is int and identity['pid']>1 and
+            type(identity['ticks'])is str and re.fullmatch('[1-9][0-9]*',identity['ticks']),'launcher_repair_process_identity')
+    must(type(plan['files'])is dict and set(plan['files'])==set(REPAIR_FILES),'launcher_repair_three_files_only')
+    for entry in plan['files'].values():
+        must(type(entry)is dict and set(entry)=={'before_sha256','after_sha256'},'launcher_repair_file_fields')
+        for value in entry.values():guard.digest_value(value)
+        must(entry['before_sha256']!=entry['after_sha256'],'launcher_repair_changed_files_required')
+    return plan
+
+
+def launcher_repair_targets(plan):
+    owner=tuple(plan['private_owner'])
+    return {'assistant_release.py':(guard.ROOT/'operations/r25-publisher/assistant_release.py',owner,0o600),
+        'policy':(guard.STORE/'POLICY.json',owner,0o600),'handoff':(LIVE_FILES['handoff'],owner,0o600)}
+
+
+def launcher_repair_folder(approval_sha256):
+    return guard.STORE/'launcher-import-repairs'/guard.digest_value(approval_sha256)
+
+
+def verify_launcher_repair_bundle(rt,plan,bundle):
+    must(bundle==guard.ROOT/'operations/r25-controller-candidates'/plan['deploy']['commit'],'launcher_repair_fixed_bundle')
+    identity=plan['deploy']
+    manifest=rt.read(bundle/'r25-controller-manifest.json',identity['manifest_sha256'])
+    must(set(manifest)=={'schema','repository','ref','commit','run_id','run_attempt','status','installation_performed','archive','files'} and
+        manifest.get('schema')==1 and all(manifest.get(k)==identity[k] for k in ('repository','ref','commit','run_id','run_attempt')) and
+        manifest.get('status')=='NOT_DEPLOYED' and manifest.get('installation_performed')is False,'launcher_repair_formal_manifest')
+    archive=guard.read_file(bundle/'r25-controller.zip',owner=tuple(plan['private_owner']),expected=identity['archive_sha256'],limit=26*1024*1024)
+    must(manifest.get('archive')=={'name':'r25-controller.zip','bytes':len(archive),'sha256':identity['archive_sha256']},'launcher_repair_archive_binding')
+    items=manifest.get('files');must(type(items)is list and len(items)==len(REPAIR_BUNDLE_FILES),'launcher_repair_bundle_inventory')
+    by_name={x.get('path'):x for x in items if type(x)is dict}
+    must(set(by_name)==REPAIR_BUNDLE_FILES and len(by_name)==len(items),'launcher_repair_bundle_inventory')
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        must(zipped.namelist()==sorted(REPAIR_BUNDLE_FILES),'launcher_repair_archive_inventory')
+        payload={}
+        for name,item in by_name.items():
+            must(set(item)=={'path','bytes','sha256'} and type(item['bytes'])is int and 0<item['bytes']<=1024*1024,'launcher_repair_bundle_entry')
+            guard.digest_value(item['sha256'])
+            entry=zipped.getinfo(name)
+            must(not entry.is_dir() and entry.file_size==item['bytes'] and entry.compress_type==zipfile.ZIP_STORED,'launcher_repair_archive_file')
+            raw=zipped.read(name);must(sha(raw)==item['sha256'],'launcher_repair_archive_member')
+            payload[name]=raw
+            rt.identity(bundle/name,expected_sha256=item['sha256'],expected_bytes=item['bytes'],expected_owner=tuple(plan['private_owner']),expected_mode=0o600)
+            guard.reject_legacy_bytecode(bundle/name)
+    # Same canonical archive contract as scripts/package-r25-release.py:
+    # no alternate timestamps, permissions, headers, comments or trailing bytes.
+    output=io.BytesIO()
+    with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_STORED) as zipped:
+        for name in sorted(REPAIR_BUNDLE_FILES):
+            info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.create_system=3
+            info.external_attr=(stat.S_IFREG|0o600)<<16;zipped.writestr(info,payload[name])
+    must(archive==output.getvalue(),'launcher_repair_archive_not_canonical')
+    must(by_name['upgrade_assistant_controller.py']['sha256']==identity['tool_sha256'] and
+        by_name['assistant_release.py']['sha256']==plan['files']['assistant_release.py']['after_sha256'],'launcher_repair_tool_binding')
+    return manifest
+
+
+def launcher_repair_bindings(rt,plan,bundle,folder):
+    """The saved before-image is authoritative after any partial copy."""
+    raw={}
+    for name,(target,owner,mode) in launcher_repair_targets(plan).items():
+        before=folder/'before'/name
+        path=before if before.exists() else target
+        raw[name]=guard.read_file(path,owner=owner,mode=mode,expected=plan['files'][name]['before_sha256'])
+        rt.identity(source(bundle,name),expected_sha256=plan['files'][name]['after_sha256'],expected_owner=owner,expected_mode=mode)
+    code=raw['assistant_release.py']
+    must(code.count(REPAIR_OLD)==1 and sha(code.replace(REPAIR_OLD,REPAIR_NEW))==plan['files']['assistant_release.py']['after_sha256'],
+        'launcher_repair_exact_import_patch')
+    old=guard.strict_json(raw['policy']);new=rt.read(bundle/'POLICY.next.json',plan['files']['policy']['after_sha256'])
+    must(old.get('schema')=='R25_CORE_BUSINESS_POLICY_V2' and old.get('upgrade',{}).get('capability')=='assistant-v1' and
+        old['installation']['controller_owner']==plan['controller_owner'] and old['installation']['private_owner']==plan['private_owner'] and
+        old['upgrade']['baseline_release']==plan['current_release'] and
+        old['upgrade']['assistant']['compatible_recovery_jar_sha256']==plan['current_release']['artifact_sha256'],'launcher_repair_installed_policy')
+    expected=copy.deepcopy(old)
+    must(expected['runtime_modules']['assistant_release.py']==plan['files']['assistant_release.py']['before_sha256'],'launcher_repair_old_runtime_binding')
+    expected['runtime_modules']['assistant_release.py']=plan['files']['assistant_release.py']['after_sha256']
+    expected['upgrade']['assistant']['artifacts']['deploy']={k:plan['deploy'][k] for k in ('repository','commit')}
+    expected['upgrade']['assistant']['artifacts']['deploy']['sha256']=plan['deploy']['archive_sha256']
+    expected['upgrade']['assistant']['review_evidence_sha256']=plan['review_evidence_sha256']
+    must(new==expected,'launcher_repair_policy_other_changes')
+    must(plan['preserved']['application']==old['upgrade']['configuration']['before_sha256'],'launcher_repair_preserved_application_binding')
+    before_env=env_values(raw['handoff'])
+    must(before_env.get('R25_CORE_RELEASE_POLICY_SHA256')==plan['files']['policy']['before_sha256'],'launcher_repair_old_handoff_binding')
+    after=replace_env(raw['handoff'],{'R25_CORE_RELEASE_POLICY_SHA256':plan['files']['policy']['after_sha256']})
+    must(sha(after)==plan['files']['handoff']['after_sha256'],'launcher_repair_handoff_other_changes')
+    return old,raw
+
+
+def launcher_repair_frontend_bindings(rt,plan,engine,module):
+    """Initialize only load()'s immutable frontend bindings, never backend load.
+
+    The ordinary load() also validates the live backend policy and cannot run
+    between this correction's compare-and-swap writes. These are its existing
+    fixed selection/source/lock checks, with the same source-bound selector.
+    """
+    rt.require_lease()
+    paths={'R25_FRONTEND_SELECTOR':guard.ROOT/'operations/frontend_lifecycle_selector.py',
+        'R25_FRONTEND_SELECTION_REFERENCE':guard.ROOT/'runtime/config/frontend-selection.reference',
+        'R25_FRONTEND_SELECTION':guard.ROOT/'runtime/config/frontend-selection.json'}
+    must(all(engine.v.get(key)==str(path) for key,path in paths.items()),'launcher_repair_frontend_fixed_bindings')
+    must(engine.deployment_root/'runtime/frontend-deployment.lock'==guard.LOCK,'launcher_repair_frontend_lock_path')
+    selector=paths['R25_FRONTEND_SELECTOR'];reference=paths['R25_FRONTEND_SELECTION_REFERENCE']
+    must(engine.v.get('R25_FRONTEND_SELECTOR_SHA256')==module.SELECTOR,'launcher_repair_selector_binding')
+    guard.reject_legacy_bytecode(selector)
+    source=guard.read_file(selector,owner=tuple(plan['controller_owner']),mode=0o700,expected=module.SELECTOR)
+    values={}
+    for line in guard.read_file(reference,owner=tuple(plan['private_owner'])).decode().splitlines():
+        if not line or line.startswith('#'):continue
+        must('='in line,'launcher_repair_selection_reference_syntax');key,value=line.split('=',1)
+        must(key not in values and re.fullmatch('[A-Za-z_][A-Za-z0-9_]*',key),'launcher_repair_selection_reference_syntax')
+        values[key]=value
+    must(values.get('schema')=='ARTLIVE_FRONTEND_SELECTION_REFERENCE_V1','launcher_repair_selection_reference')
+    selection_sha=guard.digest_value(values.get('selection_sha256'))
+    selected=guard.strict_json(guard.read_file(paths['R25_FRONTEND_SELECTION'],owner=tuple(plan['private_owner']),expected=selection_sha))
+    must(selected.get('deployment_root')==str(engine.deployment_root) and selected.get('shared_lock')==str(guard.LOCK),
+        'launcher_repair_selection_lock_binding')
+    rt.identity(guard.LOCK,expected_owner=tuple(plan['private_owner']),expected_mode=0o600)
+    held=os.fstat(rt.fd);actual=guard.LOCK.stat()
+    must((held.st_dev,held.st_ino)==(actual.st_dev,actual.st_ino),'launcher_repair_selection_lease_inode')
+    engine.selection_sha=selection_sha;engine.lock=guard.LOCK
+    engine.selector_module=guard.source_module(selector,'assistant_launcher_repair_bound_selector',source)
+
+
+def launcher_repair_engine(rt,plan,old,raw):
+    """Read process ownership via unchanged, bound lifecycle during mixed policy.
+
+    No normal engine.load(), stop/start, fallback source, or global sys.path
+    alteration. All three targets may be mixed only under this repair lease.
+    """
+    for name,digest in old['controllers'].items():
+        rt.identity(guard.ROOT/'operations'/name,expected_sha256=digest,expected_owner=tuple(plan['controller_owner']),expected_mode=0o700)
+    for name,digest in old['runtime_modules'].items():
+        if name=='assistant_release.py':continue
+        path=guard.ROOT/'operations/r25-publisher'/name
+        guard.reject_legacy_bytecode(path)
+        rt.identity(path,expected_sha256=digest,expected_owner=tuple(plan['private_owner']),expected_mode=0o600)
+    path=guard.ROOT/'operations/lifecycle_adapter.py'
+    value=guard.read_file(path,owner=tuple(plan['controller_owner']),mode=0o700,expected=old['controllers']['lifecycle_adapter.py'])
+    module=guard.source_module(path,'assistant_launcher_repair_bound_lifecycle',value)
+    os.environ['R25_ROOT']=str(guard.ROOT)
+    os.environ['ARTLIVE_R25_HANDOFF_CONFIG']=str(LIVE_FILES['handoff'])
+    engine=module.production(rt.fd)
+    engine.v=env_values(raw['handoff']);engine.kind=engine.v.get('R25_LIFECYCLE_RELEASE_KIND')
+    engine.load_execution_policy()
+    launcher_repair_frontend_bindings(rt,plan,engine,module)
+    return engine
+
+
+def launcher_repair_context(rt,plan,old,raw):
+    rt.require_lease()
+    must(asdict(rt.current())==plan['current_release'],'launcher_repair_core_current_drift')
+    for name,digest in plan['preserved'].items():
+        rt.identity(LIVE_FILES[name],expected_sha256=digest,expected_owner=tuple(plan['private_owner']),expected_mode=0o600)
+    manifest=rt.read(LIVE_FILES['manifest'],plan['preserved']['manifest'])
+    backends=[x for x in manifest.get('entries',[]) if type(x)is dict and x.get('path')=='artifacts/backend.jar']
+    must(len(backends)==1 and backends[0].get('sha256')==plan['current_release']['artifact_sha256'],'launcher_repair_preserved_manifest_binding')
+    must(env_values(raw['handoff']).get('R25_BACKEND_SHA256')==plan['current_release']['artifact_sha256'],'launcher_repair_preserved_handoff_backend')
+    control=plan['installed_control'];control_folder=guard.STORE/'controller-upgrades'/control['approval_sha256']
+    original=rt.read(control_folder/'approval.json',control['approval_sha256'])
+    active=rt.read(guard.STORE/'CONTROL_UPGRADE_ACTIVE.json')
+    journal=rt.read(control_folder/'journal.json',control['journal_sha256'])
+    must(original.get('schema')==SCHEMA and original.get('current_release')==plan['current_release'] and
+        original.get('operational',{}).get('policy',{}).get('after_sha256')==plan['files']['policy']['before_sha256'] and
+        original.get('operational',{}).get('handoff',{}).get('after_sha256')==plan['files']['handoff']['before_sha256'] and
+        original.get('files',{}).get('assistant_release.py',{}).get('after_sha256')==plan['files']['assistant_release.py']['before_sha256'] and
+        active=={'schema':'R25_CORE_CONTROLLER_UPGRADE_ACTIVE_V1','approval_sha256':control['approval_sha256']} and
+        journal.get('schema')==SCHEMA and journal.get('approval_sha256')==control['approval_sha256'] and journal.get('phase')=='INSTALLED','launcher_repair_installed_control_drift')
+    # Only this exact failed AI transaction is exempted; all other work stays terminal.
+    core_active=guard.STORE/'ACTIVE.json'
+    if core_active.exists():
+        marker=rt.read(core_active);tx=marker.get('transaction_id')
+        must(type(tx)is str and re.fullmatch('[a-f0-9]{32}',tx),'launcher_repair_core_active')
+        item=rt.read(guard.STORE/'transactions'/tx/'journal.json')
+        must(item.get('schema')=='R25_CORE_TRANSACTION_V1' and item.get('transaction_id')==tx and item.get('phase')in {'COMMITTED','RESTORED'},'launcher_repair_other_core_transaction')
+    backup=guard.ROOT/'runtime/assistant-backups/assistant-daily-v1/ACTIVE.json'
+    if backup.exists():
+        marker=rt.read(backup);day=marker.get('day')
+        must(type(day)is str and re.fullmatch('20[0-9]{2}-[0-9]{2}-[0-9]{2}',day),'launcher_repair_backup_day')
+        item=rt.read(backup.parent/'runs'/(day+'.json'))
+        must(item.get('schema')=='R25_ASSISTANT_SCHEDULED_BACKUP_V1' and item.get('day')==day and
+            item.get('phase')in {'COMMITTED','FAILED_RESUMED','RECOVERED_WITHOUT_REPLAY','PURGED'},'launcher_repair_other_backup_transaction')
+    import ai_runtime
+    ai=ai_runtime.AIRuntime();ai.core=rt
+    ai_store=guard.ROOT/'runtime/ai-publications';bound=plan['ai']
+    marker=rt.read(ai_store/'ACTIVE.json',bound['active_sha256'])
+    rt.identity(ai_store/'CURRENT.json',expected_sha256=bound['current_sha256'])
+    rt.identity(ai_store/'transactions'/REPAIR_TX/'journal.json',expected_sha256=bound['journal_sha256'])
+    must(marker=={'schema':'R25_AI_ACTIVE_V1','transaction_id':REPAIR_TX},'launcher_repair_ai_active')
+    journal,snapshot=ai.validate_recovery(REPAIR_TX)
+    must(journal['phase']=='RECOVERY_REQUIRED' and journal['snapshot_sha256']==bound['snapshot_sha256'] and
+        snapshot['core']==plan['current_release'] and ai.current()==snapshot['current'] and
+        snapshot['current']['source_tree_sha256']==bound['source_tree_sha256'] and snapshot['changed_roles']==['critic'] and
+        [x['phase'] for x in journal['history']][-2:]==['RESTORE_START_INTENT','RECOVERY_REQUIRED'],
+        'launcher_repair_exact_failed_restore_required')
+    ai_runtime.guard.verify_live(snapshot['current'])
+    engine=launcher_repair_engine(rt,plan,old,raw)
+    must(engine.active('java',19080)is None and engine.watchdog_identity()is None,'launcher_repair_quiescence_drift')
+    for role,port in (('guide',19084),('critic',19085)):
+        value=engine.active(role,port)
+        must(value is not None and {'pid':value['pid'],'ticks':str(value['ticks'])}==plan['services'][role],'launcher_repair_service_drift')
+    must(plan['services']['guide']=={'pid':snapshot['before_health']['guide_pid'],'ticks':str(snapshot['before_health']['guide_start_ticks'])},'launcher_repair_original_guide_required')
+    engine.frontend('status',rt.fd)
+
+
+def verify_launcher_repair_targets(rt,plan,*,mixed=False,after=False):
+    for name,(path,owner,mode) in launcher_repair_targets(plan).items():
+        guard.reject_legacy_bytecode(path)
+        actual=rt.identity(path,expected_owner=owner,expected_mode=mode)['sha256']
+        entry=plan['files'][name]
+        allowed={entry['after_sha256']} if after else ({entry['before_sha256'],entry['after_sha256']} if mixed else {entry['before_sha256']})
+        must(actual in allowed,'launcher_repair_foreign_target_drift')
+
+
+def launcher_repair_approval(rt,plan,approval_sha256,folder):
+    source_record=folder/'approval.json' if (folder/'approval.json').exists() else guard.STORE/'LAUNCHER_IMPORT_REPAIR_APPROVAL.json'
+    must(rt.read(source_record,approval_sha256)==plan,'launcher_repair_private_approval_binding')
+    review=folder/'review.json' if (folder/'review.json').exists() else guard.STORE/'LAUNCHER_IMPORT_REPAIR_REVIEW.json'
+    must(type(rt.read(review,plan['review_evidence_sha256']))is dict,'launcher_repair_review_record')
+    pointer=guard.STORE/'LAUNCHER_IMPORT_REPAIR_ACTIVE.json'
+    if pointer.exists():must(rt.read(pointer)=={'schema':REPAIR_SCHEMA,'approval_sha256':approval_sha256},'launcher_repair_other_active_plan')
+
+
+def repair_launcher_import(rt,plan,bundle,*,approval_sha256,recovery=False):
+    validate_launcher_repair(plan);folder=launcher_repair_folder(approval_sha256);journal_path=folder/'journal.json'
+    with upgrade_lease(rt):
+        launcher_repair_approval(rt,plan,approval_sha256,folder)
+        verify_launcher_repair_bundle(rt,plan,bundle)
+        record=rt.read(journal_path) if journal_path.exists() else None
+        if recovery:must(record is not None,'launcher_repair_not_started')
+        if record is not None:
+            must(record.get('schema')==REPAIR_SCHEMA and record.get('approval_sha256')==approval_sha256 and record.get('phase')in REPAIR_PHASES,'launcher_repair_journal')
+            must(all((folder/'before'/name).exists() for name in REPAIR_FILES),'launcher_repair_preimages_required')
+        old,raw=launcher_repair_bindings(rt,plan,bundle,folder)
+        launcher_repair_context(rt,plan,old,raw)
+        if record is not None and record['phase']=='INSTALLED':
+            verify_launcher_repair_targets(rt,plan,after=True);return 'LAUNCHER_IMPORT_REPAIR_INSTALLED_NOOP'
+        if record is not None and record['phase']=='RESTORED':
+            verify_launcher_repair_targets(rt,plan)
+            if recovery:return 'LAUNCHER_IMPORT_REPAIR_RESTORED_NOOP'
+            # A deliberate repair after exact restoration may reuse the same
+            # immutable approval/preimages; never silently resume partial copy.
+        if not recovery:must(record is None or record['phase']=='RESTORED','launcher_repair_explicit_recovery_required')
+        verify_launcher_repair_targets(rt,plan,mixed=recovery)
+        if record is None:
+            rt.storage.mkdir_private(folder.parent);rt.storage.mkdir_private(folder);rt.storage.mkdir_private(folder/'before')
+            for name in REPAIR_FILES:
+                target,owner,mode=launcher_repair_targets(plan)[name]
+                saved=folder/'before'/name
+                if saved.exists():rt.identity(saved,expected_sha256=plan['files'][name]['before_sha256'],expected_owner=owner,expected_mode=mode)
+                else:rt.storage.atomic_copy_file(target,saved,plan['files'][name]['before_sha256'],source_owner=owner,source_mode=mode)
+            for incoming,saved,digest in (('LAUNCHER_IMPORT_REPAIR_APPROVAL.json','approval.json',approval_sha256),
+                    ('LAUNCHER_IMPORT_REPAIR_REVIEW.json','review.json',plan['review_evidence_sha256'])):
+                if (folder/saved).exists():rt.identity(folder/saved,expected_sha256=digest)
+                else:rt.storage.atomic_copy_file(guard.STORE/incoming,folder/saved,digest)
+            record={'schema':REPAIR_SCHEMA,'approval_sha256':approval_sha256,'phase':'PREPARED','history':['PREPARED']}
+            rt.write(journal_path,record)
+            rt.write(guard.STORE/'LAUNCHER_IMPORT_REPAIR_ACTIVE.json',{'schema':REPAIR_SCHEMA,'approval_sha256':approval_sha256})
+        def phase(value):
+            record['phase']=value;record['history'].append(value);rt.write(journal_path,record)
+        phase('RESTORE_INTENT' if recovery else 'INSTALL_INTENT')
+        try:
+            for name in REPAIR_FILES:
+                # Revalidate exact old AI/current/process/other transaction state before each CAS.
+                launcher_repair_context(rt,plan,old,raw)
+                verify_launcher_repair_targets(rt,plan,mixed=True)
+                target,owner,mode=launcher_repair_targets(plan)[name]
+                entry=plan['files'][name];actual=rt.identity(target,expected_owner=owner,expected_mode=mode)['sha256']
+                digest=entry['before_sha256'] if recovery else entry['after_sha256']
+                if actual==digest:continue
+                src=folder/'before'/name if recovery else source(bundle,name)
+                rt.storage.atomic_copy_file(src,target,digest,replace=True,expected_existing_sha256=actual,
+                    target_owner=owner,mode=mode,existing_owner=owner,existing_mode=mode)
+            verify_launcher_repair_targets(rt,plan,after=not recovery)
+            launcher_repair_context(rt,plan,old,raw)
+            phase('RESTORED' if recovery else 'INSTALLED')
+            return 'LAUNCHER_IMPORT_REPAIR_RESTORED' if recovery else 'LAUNCHER_IMPORT_REPAIR_INSTALLED'
+        except BaseException:
+            phase('RECOVERY_REQUIRED');raise
+
+
 def main():
     import argparse
     import json
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=('upgrade','recover'))
+    parser.add_argument('command',choices=('upgrade','recover','repair-launcher-import','recover-launcher-import'))
     parser.add_argument('--approval-sha256',required=True)
     args=parser.parse_args()
     try:
         guard.digest_value(args.approval_sha256)
         rt=ControlUpgradeRuntime()
+        if args.command in ('repair-launcher-import','recover-launcher-import'):
+            folder=launcher_repair_folder(args.approval_sha256)
+            recorded=folder/'approval.json'
+            approval_file=recorded if recorded.exists() else guard.STORE/'LAUNCHER_IMPORT_REPAIR_APPROVAL.json'
+            plan=validate_launcher_repair(rt.read(approval_file,args.approval_sha256))
+            bundle=guard.ROOT/'operations/r25-controller-candidates'/plan['deploy']['commit']
+            must(Path(__file__).absolute()==bundle/'upgrade_assistant_controller.py','launcher_repair_trusted_bundle_location')
+            rt.identity(Path(__file__),expected_sha256=plan['deploy']['tool_sha256'])
+            result=repair_launcher_import(rt,plan,bundle,approval_sha256=args.approval_sha256,recovery=args.command=='recover-launcher-import')
+            print(json.dumps({'outcome':result,'application_restart':False,'database_writes':False,'ai_transaction_replayed':False}));return 0
         recorded=guard.STORE/'controller-upgrades'/args.approval_sha256/'approval.json'
         approval_file=recorded if args.command=='recover' and recorded.exists() else guard.STORE/'CONTROL_UPGRADE_APPROVAL.json'
         plan=validate(rt.read(approval_file,args.approval_sha256))
