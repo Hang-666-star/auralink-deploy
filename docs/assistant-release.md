@@ -60,13 +60,13 @@ python3 -B /reviewed/fixed/bundle/upgrade_assistant_controller.py recover --appr
 - `restore_disposable` 只接受明确 disposable 的空 DB、全新附件目标；验证 manifest/dump/hash、真实 pg_restore、最终文件 bytes/hash 和 ledger。它验证备份时点，而不拥有备份后删除事实。**旧备份不能直接成为服务恢复源；上线旧备份需要当前删除/撤权日志的额外一致性审查。例行应用回退绝不调用它。** 无破坏式 down migration。
 - NOT_STARTED 不调用 recovery；PREPARED 仅证实原件后终止；混合控制/应用文件要求各自 journal 恢复；COMMITTED 使用原显式 application rollback 且前版必须仍兼容；未知/外来漂移保留证据并停止写入。
 
-## S4 证据边界和仍需现场事实
+## 保留的S4证据边界与后续现场绑定
 
 实际 S4 报告在迁移 workspace 的 `stages/assistant-storage-release-s4-20261014/`，不是仓库 CI/生产批准。真实 PostgreSQL 的非空 V13→V16、V15→V16、故障事务/丢回复、pg_dump/恢复、墓碑/图像字节，以及实际 Publisher+CoreRuntime 文件事务在同一 rehearsal 中执行。OS lifecycle/正式 GitHub批准/生产 provider/公网不属于该 fixture 证明。
 
 本地 controller 事务测试确实使用真实 flock、目录、hash/CAS、fsync、before/after 文件和部分失败恢复；服务健康、PID 和 business-policy 夹具明确标记。AI 新文件切换是实际 AIRuntime；provider/OS进程为夹具。不能称生产回滚验收。
 
-剩余现场门：已安装 AI controller 状态、真实 service owner/groups、private provider env 的新引用内容与摘要、专有附件根容量/权限、数据库 migration 账号授权、正式 source/release/run/制品、真实 owner review 与环境批准、最终生产 API origin Web 构建、生产保留和备份政策。S5 另需用户批准有界真实模型/RAG 测试和预算。本轮不访问生产，也不制造上述事实。
+S4记录中的现场事项已由后续只读记录补充：2026-10-14观察到AI controller尚未初装，生产Core已是Knowledge V2，PG service为artlivepg25/999:999、现有pgpass0600；真实AI源码19文件与baseline匹配且owner1000:1000。不得把这些时点观察当永远有效。生产执行前仍需核准私有provider env增量/附件根、正式source/run/artifact及真实review。用户首发政策与S5模型结果见下节及发布交接；S5不等于生产验收，RAGFlow由用户明确延后。此源码轮仅只读现场及隔离测试，未执行生产安装/备份/调度。
 
 ## 用户已批准的首发运行政策（2026-10-14）
 
